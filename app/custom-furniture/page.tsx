@@ -20,22 +20,83 @@ function CustomFurnitureContent() {
   const selectedDesign = searchParams.get("design");
   console.log("Selected Design:", selectedDesign);
 
-  const selectedProduct = products.find(
-    (product) => product.id === selectedDesign
-  );
+  type SelectedDesignType = {
+    id: string;
+    name: string;
+    category?: string;
+    description?: string;
+    price?: string;
+    image?: string;
+  };
+
+  const [selectedProduct, setSelectedProduct] = useState<SelectedDesignType | null>(null);
+
+  useEffect(() => {
+    if (!selectedDesign) return;
+
+    // Check static list first
+    const staticFound = products.find((p) => p.id === selectedDesign);
+    if (staticFound) {
+      setSelectedProduct(staticFound);
+      return;
+    }
+
+    // Check Supabase products table
+    supabase
+      .from("products")
+      .select("*")
+      .eq("id", selectedDesign)
+      .maybeSingle()
+      .then(({ data }) => {
+        if (data) {
+          setSelectedProduct({
+            id: data.id,
+            name: data.name,
+            category: data.category,
+            description: data.description || "",
+            price: data.price || "Custom Quote",
+            image: data.image_url,
+          });
+        }
+      });
+  }, [selectedDesign]);
 
   const [userId, setUserId] = useState("");
   const [userEmail, setUserEmail] = useState("");
 
+  const [furnitureTypes, setFurnitureTypes] = useState<string[]>([]);
+  const [materialPreferences, setMaterialPreferences] = useState<string[]>([]);
+  const [optionsLoading, setOptionsLoading] = useState(true);
+
   const [checkingUser, setCheckingUser] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const [successRequestId, setSuccessRequestId] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => {
     checkUser();
+    loadOptions();
   }, []);
+
+  async function loadOptions() {
+    setOptionsLoading(true);
+    try {
+      const [typesRes, materialsRes] = await Promise.all([
+        supabase.from("furniture_types").select("name").order("name"),
+        supabase.from("material_preferences").select("name").order("name"),
+      ]);
+
+      setFurnitureTypes((typesRes.data || []).map((item) => item.name));
+      setMaterialPreferences((materialsRes.data || []).map((item) => item.name));
+    } catch (err) {
+      console.error("Failed to load options from database:", err);
+    } finally {
+      setOptionsLoading(false);
+    }
+  }
 
   async function checkUser() {
     setError("");
@@ -60,6 +121,16 @@ function CustomFurnitureContent() {
 
       setUserId(user.id);
       setUserEmail(user.email || "");
+
+      supabase
+        .from("admin_users")
+        .select("user_id")
+        .eq("user_id", user.id)
+        .maybeSingle()
+        .then(({ data }) => {
+          if (data) setIsAdmin(true);
+        });
+
       setCheckingUser(false);
     } catch (err) {
       console.error("Unexpected auth error:", err);
@@ -234,22 +305,159 @@ function CustomFurnitureContent() {
   return (
     
     <main className="min-h-screen bg-[#f5efe6]">
-      <header className="bg-[#3d281c] text-white">
-        <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
-          <a
-            href="/"
-            className="text-2xl font-serif font-semibold hover:opacity-90"
-          >
-            Gavika Furnitech
+      {/* NAVBAR */}
+      <header className="sticky top-0 z-50 border-b border-[#ded5c8] bg-[#f8f5ef]/95 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+          <a href="/" className="flex items-center gap-3">
+            <img
+              src="/gavika-logo.png"
+              alt="Gavika Furnitech"
+              className="h-14 w-auto object-contain"
+            />
+
+            <div>
+              <p className="text-xl font-semibold tracking-wide text-[#29251f]">
+                Gavika Furnitech
+              </p>
+              <p className="text-xs tracking-[0.2em] text-[#8b6f47]">
+                PREMIUM FURNITURE
+              </p>
+            </div>
           </a>
 
-          <a
-            href="/account"
-            className="rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/20 transition"
+          <nav className="hidden items-center gap-8 text-sm font-medium md:flex">
+            <a href="/" className="hover:text-[#8b6f47]">
+              Home
+            </a>
+
+            <a href="/furniture" className="hover:text-[#8b6f47]">
+              Furniture
+            </a>
+
+            <a href="/custom-furniture" className="text-[#8b6f47] font-semibold">
+              Custom Furniture
+            </a>
+
+            <a href="/#process" className="hover:text-[#8b6f47]">
+              About
+            </a>
+
+            <a href="/#contact" className="hover:text-[#8b6f47]">
+              Contact
+            </a>
+
+            {userId ? (
+              <div className="flex items-center gap-3">
+                <a
+                  href={isAdmin ? "/admin/dashboard" : "/account"}
+                  className="font-semibold text-[#8b6f47] flex items-center gap-1.5 hover:text-[#5a3927] transition"
+                >
+                  <span>👤</span>
+                  <span>{isAdmin ? "Admin Dashboard" : "My Account"}</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await supabase.auth.signOut();
+                    router.replace("/login");
+                  }}
+                  className="text-xs text-gray-400 hover:text-red-600 transition"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <a href="/login" className="hover:text-[#8b6f47]">
+                Login
+              </a>
+            )}
+          </nav>
+
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden rounded-lg border border-[#ded5c8] px-3 py-2 text-xl"
+            aria-label="Open menu"
           >
-            My Account
-          </a>
+            {mobileMenuOpen ? "✕" : "☰"}
+          </button>
         </div>
+
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-[#ded5c8] bg-[#f8f5ef] px-6 py-4">
+            <nav className="flex flex-col gap-4 text-sm font-medium">
+              <a
+                href="/"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Home
+              </a>
+
+              <a
+                href="/furniture"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Furniture
+              </a>
+
+              <a
+                href="/custom-furniture"
+                onClick={() => setMobileMenuOpen(false)}
+                className="text-[#8b6f47] font-semibold"
+              >
+                Custom Furniture
+              </a>
+
+              <a
+                href="/#process"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                About
+              </a>
+
+              <a
+                href="/#contact"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Contact
+              </a>
+
+              {userId ? (
+                <div className="flex flex-col gap-2 pt-2 border-t border-[#ded5c8]">
+                  <a
+                    href={isAdmin ? "/admin/dashboard" : "/account"}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="font-semibold text-[#8b6f47]"
+                  >
+                    👤 {isAdmin ? "Admin Dashboard" : "My Account"}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await supabase.auth.signOut();
+                      router.replace("/login");
+                    }}
+                    className="text-left text-xs text-red-600 hover:underline"
+                  >
+                    Logout
+                  </button>
+                </div>
+              ) : (
+                <a
+                  href="/login"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="hover:text-[#8b6f47]"
+                >
+                  Login
+                </a>
+              )}
+            </nav>
+          </div>
+        )}
       </header>
       {selectedProduct && (
         <div className="max-w-4xl mx-auto px-6 pt-8">
@@ -422,20 +630,17 @@ function CustomFurnitureContent() {
                   className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
                 >
                   <option value="" disabled>
-                    Select furniture type
+                    {optionsLoading
+                      ? "Loading furniture types..."
+                      : furnitureTypes.length === 0
+                      ? "No furniture types configured"
+                      : "Select furniture type"}
                   </option>
-
-                  <option value="Sofa">Sofa</option>
-                  <option value="Bed">Bed</option>
-                  <option value="Dining Table">Dining Table</option>
-                  <option value="Wardrobe">Wardrobe</option>
-                  <option value="TV Unit">TV Unit</option>
-                  <option value="Modular Kitchen">Modular Kitchen</option>
-                  <option value="Study Table">Study Table</option>
-                  <option value="Office Furniture">
-                    Office Furniture
-                  </option>
-                  <option value="Other">Other</option>
+                  {furnitureTypes.map((type) => (
+                    <option key={type} value={type}>
+                      {type}
+                    </option>
+                  ))}
                 </select>
               </div>
 
@@ -518,15 +723,17 @@ function CustomFurnitureContent() {
               className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
             >
               <option value="" disabled>
-                Select preferred material
+                {optionsLoading
+                  ? "Loading material preferences..."
+                  : materialPreferences.length === 0
+                  ? "No material preferences configured"
+                  : "Select preferred material"}
               </option>
-
-              <option value="Plywood">Plywood</option>
-              <option value="MDF">MDF</option>
-              <option value="Solid Wood">Solid Wood</option>
-              <option value="Laminate">Laminate</option>
-              <option value="Veneer">Veneer</option>
-              <option value="Not Sure">Not Sure</option>
+              {materialPreferences.map((mat) => (
+                <option key={mat} value={mat}>
+                  {mat}
+                </option>
+              ))}
             </select>
           </div>
 

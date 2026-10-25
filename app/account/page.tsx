@@ -141,6 +141,34 @@ export default function AccountPage() {
   const [error, setError] = useState("");
   const [loggingOut, setLoggingOut] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+
+  const [confirmModal, setConfirmModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    confirmLabel: string;
+    variant: "success" | "danger" | "primary";
+    onConfirm: () => Promise<void> | void;
+    loading?: boolean;
+  } | null>(null);
+
+  const [successModal, setSuccessModal] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    orderNumber?: string;
+  } | null>(null);
+
+  const handleExecuteConfirm = async () => {
+    if (!confirmModal) return;
+    setConfirmModal((prev) => (prev ? { ...prev, loading: true } : null));
+    try {
+      await confirmModal.onConfirm();
+    } finally {
+      setConfirmModal(null);
+    }
+  };
 
   /*
    * ---------------------------------------------------------
@@ -1090,22 +1118,34 @@ export default function AccountPage() {
    * ---------------------------------------------------------
    */
 
-  async function handleQuotationDecision(
+  function handleQuotationDecision(
+    quotationId: string,
+    decision: "Approved" | "Rejected",
+    projectId: string
+  ) {
+    if (actionInProgressRef.current) return;
+
+    setConfirmModal({
+      isOpen: true,
+      title: decision === "Approved" ? "Approve Quotation" : "Reject Quotation",
+      message:
+        decision === "Approved"
+          ? "Are you sure you want to approve this quotation? Once approved, our team will proceed with your custom furniture order."
+          : "Are you sure you want to reject this quotation? You can request adjustments or submit a new requirement at any time.",
+      confirmLabel: decision === "Approved" ? "Yes, Approve" : "Yes, Reject",
+      variant: decision === "Approved" ? "success" : "danger",
+      onConfirm: async () => {
+        await executeQuotationDecision(quotationId, decision, projectId);
+      },
+    });
+  }
+
+  async function executeQuotationDecision(
     quotationId: string,
     decision: "Approved" | "Rejected",
     projectId: string
   ) {
     void projectId;
-
-    if (actionInProgressRef.current) return;
-
-    const confirmed = window.confirm(
-      decision === "Approved"
-        ? "Are you sure you want to approve this quotation?"
-        : "Are you sure you want to reject this quotation?"
-    );
-
-    if (!confirmed) return;
 
     /*
      * Lock synchronously BEFORE any await.
@@ -1223,19 +1263,29 @@ export default function AccountPage() {
    * ---------------------------------------------------------
    */
 
-  async function handleConfirmOrder(
+  function handleConfirmOrder(
+    quotationId: string,
+    projectId: string
+  ) {
+    if (actionInProgressRef.current) return;
+
+    setConfirmModal({
+      isOpen: true,
+      title: "Confirm Custom Order",
+      message: "Are you sure you want to place and confirm this custom furniture order?",
+      confirmLabel: "Yes, Confirm Order",
+      variant: "success",
+      onConfirm: async () => {
+        await executeConfirmOrder(quotationId, projectId);
+      },
+    });
+  }
+
+  async function executeConfirmOrder(
     quotationId: string,
     projectId: string
   ) {
     void projectId;
-
-    if (actionInProgressRef.current) return;
-
-    const confirmed = window.confirm(
-      "Are you sure you want to confirm this order?"
-    );
-
-    if (!confirmed) return;
 
     /*
      * Lock synchronously BEFORE any await.
@@ -1328,12 +1378,12 @@ export default function AccountPage() {
           "Order was created, but the latest account data could not be refreshed."
         );
 
-        alert(
-          `Order created successfully!\n\nOrder ID: ${
-            createdOrder?.order_number ||
-            "Created successfully"
-          }`
-        );
+        setSuccessModal({
+          isOpen: true,
+          title: "Order Placed Successfully!",
+          message: "Thank you for confirming your order. Our team will start crafting your design.",
+          orderNumber: createdOrder?.order_number || undefined,
+        });
       } catch (reloadError) {
         console.error(
           "Order refresh error:",
@@ -1348,12 +1398,12 @@ export default function AccountPage() {
           "Order created successfully, but the latest account data could not be refreshed. Please refresh the page."
         );
 
-        alert(
-          `Order created successfully!\n\nOrder ID: ${
-            createdOrder?.order_number ||
-            "Created successfully"
-          }\n\nPlease refresh the page to see the latest order status.`
-        );
+        setSuccessModal({
+          isOpen: true,
+          title: "Order Placed Successfully!",
+          message: "Your order was created. Please refresh the page to see the latest order status.",
+          orderNumber: createdOrder?.order_number || undefined,
+        });
       }
     } catch (err) {
       console.error(
@@ -1481,27 +1531,132 @@ export default function AccountPage() {
 
   return (
     <main className="min-h-screen bg-[#f5efe6]">
-      {/* HEADER */}
+      {/* NAVBAR */}
+      <header className="sticky top-0 z-50 border-b border-[#ded5c8] bg-[#f8f5ef]/95 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+          <Link href="/" className="flex items-center gap-3">
+            <img
+              src="/gavika-logo.png"
+              alt="Gavika Furnitech"
+              className="h-14 w-auto object-contain"
+            />
 
-      <header className="bg-[#3d281c] text-white shadow-sm">
-        <div className="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
-          <Link
-            href="/"
-            className="text-2xl font-serif font-semibold hover:opacity-90 transition"
-          >
-            Gavika Furnitech
+            <div>
+              <p className="text-xl font-semibold tracking-wide text-[#29251f]">
+                Gavika Furnitech
+              </p>
+              <p className="text-xs tracking-[0.2em] text-[#8b6f47]">
+                PREMIUM FURNITURE
+              </p>
+            </div>
           </Link>
 
+          <nav className="hidden items-center gap-8 text-sm font-medium md:flex">
+            <Link href="/" className="hover:text-[#8b6f47] transition">
+              Home
+            </Link>
+
+            <Link href="/furniture" className="hover:text-[#8b6f47] transition">
+              Furniture
+            </Link>
+
+            <Link href="/custom-furniture" className="hover:text-[#8b6f47] transition">
+              Custom Furniture
+            </Link>
+
+            <Link href="/#process" className="hover:text-[#8b6f47] transition">
+              About
+            </Link>
+
+            <Link href="/#contact" className="hover:text-[#8b6f47] transition">
+              Contact
+            </Link>
+
+            <div className="flex items-center gap-3">
+              <span className="font-semibold text-[#8b6f47] flex items-center gap-1.5">
+                <span>👤</span>
+                <span>My Account</span>
+              </span>
+              <button
+                type="button"
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="text-xs text-gray-400 hover:text-red-600 transition disabled:opacity-50"
+              >
+                {loggingOut ? "Logging out..." : "Logout"}
+              </button>
+            </div>
+          </nav>
+
           <button
-            onClick={handleLogout}
-            disabled={loggingOut}
-            className="rounded-lg bg-white/10 px-4 py-2 text-sm font-medium hover:bg-white/20 transition disabled:opacity-50"
+            type="button"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden rounded-lg border border-[#ded5c8] px-3 py-2 text-xl"
+            aria-label="Open menu"
           >
-            {loggingOut
-              ? "Logging out..."
-              : "Logout"}
+            {mobileMenuOpen ? "✕" : "☰"}
           </button>
         </div>
+
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-[#ded5c8] bg-[#f8f5ef] px-6 py-4">
+            <nav className="flex flex-col gap-4 text-sm font-medium">
+              <Link
+                href="/"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Home
+              </Link>
+
+              <Link
+                href="/furniture"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Furniture
+              </Link>
+
+              <Link
+                href="/custom-furniture"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Custom Furniture
+              </Link>
+
+              <Link
+                href="/#process"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                About
+              </Link>
+
+              <Link
+                href="/#contact"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Contact
+              </Link>
+
+              <div className="flex flex-col gap-2 pt-2 border-t border-[#ded5c8]">
+                <span className="font-semibold text-[#8b6f47]">
+                  👤 My Account
+                </span>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  disabled={loggingOut}
+                  className="text-left text-xs text-red-600 hover:underline disabled:opacity-50"
+                >
+                  {loggingOut ? "Logging out..." : "Logout"}
+                </button>
+              </div>
+            </nav>
+          </div>
+        )}
       </header>
 
       {/* MAIN */}
@@ -2122,6 +2277,148 @@ export default function AccountPage() {
           </div>
         </div>
       </section>
+
+      {/* Custom Confirmation Modal */}
+      {confirmModal && confirmModal.isOpen && (
+        <div
+          onClick={() => !confirmModal.loading && setConfirmModal(null)}
+          className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-[#23170f]/60 backdrop-blur-md animate-in fade-in duration-200"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-white rounded-3xl p-7 shadow-2xl border border-[#e7dccd] text-center relative overflow-hidden animate-in zoom-in-95 duration-200"
+            role="dialog"
+            aria-modal="true"
+          >
+            {/* Top Close Button */}
+            <button
+              type="button"
+              disabled={confirmModal.loading}
+              onClick={() => setConfirmModal(null)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-gray-600 p-2 rounded-full hover:bg-[#f7f2ea] transition"
+              aria-label="Close modal"
+            >
+              <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+
+            {/* Icon */}
+            <div
+              className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm border ${
+                confirmModal.variant === "success"
+                  ? "bg-green-50 border-green-100 text-green-600"
+                  : confirmModal.variant === "danger"
+                  ? "bg-red-50 border-red-100 text-red-600"
+                  : "bg-[#f7f2ea] border-[#ded5c8] text-[#3d281c]"
+              }`}
+            >
+              {confirmModal.variant === "success" ? (
+                <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              ) : confirmModal.variant === "danger" ? (
+                <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              ) : (
+                <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.75} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              )}
+            </div>
+
+            {/* Title & Description */}
+            <h3 className="text-xl font-serif font-semibold text-[#3d281c]">
+              {confirmModal.title}
+            </h3>
+            <p className="text-sm text-gray-500 mt-2 leading-relaxed max-w-sm mx-auto">
+              {confirmModal.message}
+            </p>
+
+            {/* Action Buttons */}
+            <div className="mt-7 grid grid-cols-2 gap-3 pt-2">
+              <button
+                type="button"
+                disabled={confirmModal.loading}
+                onClick={() => setConfirmModal(null)}
+                className="w-full py-3 px-4 rounded-xl border border-[#ded5c8] bg-white text-sm font-semibold text-gray-700 hover:bg-[#f7f2ea] hover:border-[#cfc4b4] transition active:scale-[0.98] disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={confirmModal.loading}
+                onClick={handleExecuteConfirm}
+                className={`w-full py-3 px-4 rounded-xl active:scale-[0.98] text-sm font-semibold text-white shadow-lg flex items-center justify-center gap-2 transition disabled:opacity-50 ${
+                  confirmModal.variant === "success"
+                    ? "bg-[#2e7d32] hover:bg-[#1b5e20] shadow-green-900/20"
+                    : confirmModal.variant === "danger"
+                    ? "bg-red-600 hover:bg-red-700 shadow-red-600/25"
+                    : "bg-[#3d281c] hover:bg-[#2a1a11] shadow-[#3d281c]/25"
+                }`}
+              >
+                {confirmModal.loading ? (
+                  <>
+                    <svg className="animate-spin h-4 w-4 text-white" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                    </svg>
+                    <span>Processing...</span>
+                  </>
+                ) : (
+                  <span>{confirmModal.confirmLabel}</span>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Success Notification Modal */}
+      {successModal && successModal.isOpen && (
+        <div
+          onClick={() => setSuccessModal(null)}
+          className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-[#23170f]/60 backdrop-blur-md animate-in fade-in duration-200"
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="w-full max-w-md bg-white rounded-3xl p-7 shadow-2xl border border-[#e7dccd] text-center relative overflow-hidden animate-in zoom-in-95 duration-200"
+            role="dialog"
+            aria-modal="true"
+          >
+            <div className="mx-auto w-16 h-16 rounded-2xl bg-green-50 border border-green-100 text-green-600 flex items-center justify-center mb-4 shadow-sm">
+              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+              </svg>
+            </div>
+
+            <h3 className="text-xl font-serif font-semibold text-[#3d281c]">
+              {successModal.title}
+            </h3>
+            <p className="text-sm text-gray-500 mt-2 leading-relaxed">
+              {successModal.message}
+            </p>
+
+            {successModal.orderNumber && (
+              <div className="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#fbf8f4] border border-[#e7dccd] text-xs font-semibold text-[#3d281c]">
+                <span>Order Ref:</span>
+                <span className="font-mono text-[#8b5e3c]">{successModal.orderNumber}</span>
+              </div>
+            )}
+
+            <div className="mt-6 pt-2">
+              <button
+                type="button"
+                onClick={() => setSuccessModal(null)}
+                className="w-full py-3 px-4 rounded-xl bg-[#3d281c] hover:bg-[#2a1a11] text-sm font-semibold text-white shadow-lg transition active:scale-[0.98]"
+              >
+                Got It
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
@@ -2478,6 +2775,8 @@ function OrderTrackingCard({
         </div>
 
       )}
+
+
 
     </div>
   );

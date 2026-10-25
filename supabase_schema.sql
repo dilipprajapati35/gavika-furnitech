@@ -72,6 +72,33 @@ create table if not exists public.orders (
   updated_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
 
+-- Furniture Types Table (Managed by Admin, shown in Custom Furniture form)
+create table if not exists public.furniture_types (
+  id uuid default gen_random_uuid() primary key,
+  name text not null unique,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Material Preferences Table (Managed by Admin, shown in Custom Furniture form)
+create table if not exists public.material_preferences (
+  id uuid default gen_random_uuid() primary key,
+  name text not null unique,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+-- Catalogue Products Table (Managed by Admin, displayed on /furniture)
+create table if not exists public.products (
+  id uuid default gen_random_uuid() primary key,
+  name text not null,
+  category text not null,
+  description text,
+  price text default 'Custom Quote',
+  image_url text not null,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+
+
 -- ==============================================================================
 -- 3. STORAGE BUCKET (gavika-project-files)
 -- ==============================================================================
@@ -175,6 +202,107 @@ create policy "Admins can update orders"
   using (
     exists (select 1 from public.admin_users where user_id = auth.uid())
   );
+
+-- Furniture Types Policies
+alter table public.furniture_types enable row level security;
+drop policy if exists "Allow everyone to read furniture_types" on public.furniture_types;
+create policy "Allow everyone to read furniture_types"
+  on public.furniture_types for select
+  to public
+  using (true);
+
+drop policy if exists "Allow admins to insert furniture_types" on public.furniture_types;
+create policy "Allow admins to insert furniture_types"
+  on public.furniture_types for insert
+  to authenticated
+  with check (exists (select 1 from public.admin_users where user_id = auth.uid()));
+
+drop policy if exists "Allow admins to delete furniture_types" on public.furniture_types;
+create policy "Allow admins to delete furniture_types"
+  on public.furniture_types for delete
+  to authenticated
+  using (exists (select 1 from public.admin_users where user_id = auth.uid()));
+
+-- Material Preferences Policies
+alter table public.material_preferences enable row level security;
+drop policy if exists "Allow everyone to read material_preferences" on public.material_preferences;
+create policy "Allow everyone to read material_preferences"
+  on public.material_preferences for select
+  to public
+  using (true);
+
+drop policy if exists "Allow admins to insert material_preferences" on public.material_preferences;
+create policy "Allow admins to insert material_preferences"
+  on public.material_preferences for insert
+  to authenticated
+  with check (exists (select 1 from public.admin_users where user_id = auth.uid()));
+
+drop policy if exists "Allow admins to delete material_preferences" on public.material_preferences;
+create policy "Allow admins to delete material_preferences"
+  on public.material_preferences for delete
+  to authenticated
+  using (exists (select 1 from public.admin_users where user_id = auth.uid()));
+
+-- Insert initial default options
+insert into public.furniture_types (name)
+values 
+  ('Sofa'),
+  ('Bed'),
+  ('Dining Table'),
+  ('Wardrobe'),
+  ('TV Unit'),
+  ('Modular Kitchen'),
+  ('Study Table'),
+  ('Office Furniture'),
+  ('Other')
+on conflict (name) do nothing;
+
+insert into public.material_preferences (name)
+values 
+  ('Plywood'),
+  ('MDF'),
+  ('Solid Wood'),
+  ('Laminate'),
+  ('Veneer'),
+  ('Not Sure')
+on conflict (name) do nothing;
+
+-- Products Policies
+alter table public.products enable row level security;
+drop policy if exists "Allow public to read products" on public.products;
+create policy "Allow public to read products"
+  on public.products for select
+  to public
+  using (true);
+
+drop policy if exists "Allow admins to insert products" on public.products;
+create policy "Allow admins to insert products"
+  on public.products for insert
+  to authenticated
+  with check (exists (select 1 from public.admin_users where user_id = auth.uid()));
+
+drop policy if exists "Allow admins to update products" on public.products;
+create policy "Allow admins to update products"
+  on public.products for update
+  to authenticated
+  using (exists (select 1 from public.admin_users where user_id = auth.uid()));
+
+drop policy if exists "Allow admins to delete products" on public.products;
+create policy "Allow admins to delete products"
+  on public.products for delete
+  to authenticated
+  using (exists (select 1 from public.admin_users where user_id = auth.uid()));
+
+-- Seed default products
+insert into public.products (name, category, description, price, image_url)
+values 
+  ('Modern Luxury Sofa', 'Sofas', 'Premium contemporary sofa designed for elegant living spaces.', 'Custom Quote', 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=900&q=80'),
+  ('Premium Wooden Bed', 'Beds', 'Elegant wooden bed with a strong and timeless design.', 'Custom Quote', 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=900&q=80'),
+  ('Luxury Dining Table', 'Dining', 'Beautiful dining table crafted for modern Indian homes.', 'Custom Quote', 'https://images.unsplash.com/photo-1617104678098-de229db51175?auto=format&fit=crop&w=900&q=80'),
+  ('Designer Wardrobe', 'Wardrobes', 'Smart storage with a premium modern appearance.', 'Custom Quote', 'https://images.unsplash.com/photo-1558997519-83ea9252edf8?auto=format&fit=crop&w=900&q=80'),
+  ('Modern Coffee Table', 'Tables', 'Minimal coffee table designed for contemporary interiors.', 'Custom Quote', 'https://images.unsplash.com/photo-1532372320572-cda25653a26d?auto=format&fit=crop&w=900&q=80'),
+  ('Premium Accent Chair', 'Chairs', 'Comfortable statement chair for living rooms and bedrooms.', 'Custom Quote', 'https://images.unsplash.com/photo-1598300042247-d088f8ab3a91?auto=format&fit=crop&w=900&q=80')
+on conflict do nothing;
 
 -- Storage Policies
 drop policy if exists "Allow authenticated uploads" on storage.objects;
