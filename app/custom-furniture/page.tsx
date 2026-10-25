@@ -103,22 +103,16 @@ function CustomFurnitureContent() {
 
     try {
       const {
-        data: { user },
-        error: authError,
-      } = await supabase.auth.getUser();
+        data: { session },
+        error: sessionError,
+      } = await supabase.auth.getSession();
 
-      if (authError) {
-        console.error("Auth error:", authError);
-        setError("Unable to verify your login. Please try again.");
-        setCheckingUser(false);
-        return;
-      }
-
-      if (!user) {
+      if (sessionError || !session?.user) {
         router.replace("/login");
         return;
       }
 
+      const user = session.user;
       setUserId(user.id);
       setUserEmail(user.email || "");
 
@@ -133,9 +127,8 @@ function CustomFurnitureContent() {
 
       setCheckingUser(false);
     } catch (err) {
-      console.error("Unexpected auth error:", err);
-      setError("Something went wrong. Please refresh the page.");
-      setCheckingUser(false);
+      console.error("Auth check redirecting to login:", err);
+      router.replace("/login");
     }
   }
 
