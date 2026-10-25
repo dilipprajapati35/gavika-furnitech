@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { supabase } from "@/utils/supabase/client";
+import { useEffect, useState } from "react";
 const categories = [
   {
     name: "Living Room",
@@ -24,105 +25,152 @@ const categories = [
   },
 ];
 
-const featuredProducts = [
-  {
-    name: "Modern Wooden Sofa",
-    category: "Living Room",
-    price: "Custom Quote",
-  },
-  {
-    name: "Premium King Bed",
-    category: "Bedroom",
-    price: "Custom Quote",
-  },
-  {
-    name: "Six Seater Dining Table",
-    category: "Dining",
-    price: "Custom Quote",
-  },
-];
+type DbProduct = {
+  id: string;
+  name: string;
+  category: string;
+  description: string | null;
+  price: string;
+  image_url: string;
+};
 
 export default function Home() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [sessionUser, setSessionUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [featuredProducts, setFeaturedProducts] = useState<DbProduct[]>([]);
+  const [productsLoading, setProductsLoading] = useState(true);
+
+  useEffect(() => {
+    // Load real products from database for Featured Designs
+    supabase
+      .from("products")
+      .select("id, name, category, description, price, image_url")
+      .order("created_at", { ascending: false })
+      .limit(6)
+      .then(({ data, error }) => {
+        if (!error && data && data.length > 0) {
+          setFeaturedProducts(data);
+        }
+        setProductsLoading(false);
+      });
+
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user && session?.access_token) {
+        setSessionUser(session.user);
+        supabase
+          .from("admin_users")
+          .select("user_id")
+          .eq("user_id", session.user.id)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data) setIsAdmin(true);
+          });
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSessionUser(session?.user || null);
+      if (!session?.user) {
+        setIsAdmin(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
 
   return (
     <main className="min-h-screen bg-[#f8f5ef] text-[#29251f]">
 
       {/* NAVBAR */}
       <header className="sticky top-0 z-50 border-b border-[#ded5c8] bg-[#f8f5ef]/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-5 py-3 lg:px-8">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
 
-          <a href="#home" className="flex items-center gap-3">
+          <a href="/" className="flex items-center gap-3">
             <img
-              src="/logo.jpg"
+              src="/gavika-logo.png"
               alt="Gavika Furnitech"
               className="h-14 w-auto object-contain"
             />
 
-            <div className="hidden sm:block">
-              <p className="text-lg font-semibold tracking-wide">
-                Gavika
+            <div>
+              <p className="text-xl font-semibold tracking-wide text-[#29251f]">
+                Gavika Furnitech
               </p>
-              <p className="text-[10px] font-medium tracking-[0.28em] text-[#8b5e3c]">
-                FURNITECH
+              <p className="text-xs tracking-[0.2em] text-[#8b6f47]">
+                PREMIUM FURNITURE
               </p>
             </div>
           </a>
 
-          <nav className="hidden items-center gap-8 text-sm md:flex">
-            <a href="#home" className="hover:text-[#8b5e3c]">
+          <nav className="hidden items-center gap-8 text-sm font-medium md:flex">
+            <a href="/" className="text-[#8b6f47]">
               Home
             </a>
 
-            <a href="/furniture" className="hover:text-[#8b5e3c]">
+            <a href="/furniture" className="hover:text-[#8b6f47]">
               Furniture
             </a>
-            
-            <a href="/login" className="hover:text-[#8b5e3c]">
-               Login / My Account
-            </a>
 
-            <a href="/custom-furniture" className="hover:text-[#8b5e3c]">
+            <a href="/custom-furniture" className="hover:text-[#8b6f47]">
               Custom Furniture
             </a>
 
-            <a href="#process" className="hover:text-[#8b5e3c]">
-              How It Works
+            <a href="/#process" className="hover:text-[#8b6f47]">
+              About
             </a>
 
-            <a href="#contact" className="hover:text-[#8b5e3c]">
+            <a href="/#contact" className="hover:text-[#8b6f47]">
               Contact
             </a>
+
+            {sessionUser ? (
+              <div className="flex items-center gap-3">
+                <a
+                  href={isAdmin ? "/admin/dashboard" : "/account"}
+                  className="font-semibold text-[#8b6f47] flex items-center gap-1.5 hover:text-[#5a3927] transition"
+                >
+                  <span>👤</span>
+                  <span>{isAdmin ? "Admin Dashboard" : "My Account"}</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await supabase.auth.signOut();
+                    setSessionUser(null);
+                    setIsAdmin(false);
+                  }}
+                  className="text-xs text-gray-400 hover:text-red-600 transition"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <a href="/login" className="hover:text-[#8b6f47]">
+                Login
+              </a>
+            )}
           </nav>
 
-          <div className="flex items-center gap-3">
-
-            <a
-              href="/custom-furniture"
-              className="hidden sm:inline-flex rounded-full bg-[#29251f] px-5 py-2.5 text-sm font-semibold text-white transition hover:bg-[#8b5e3c]"
-            >
-              Start a Project
-            </a>
-
-            <button
-              type="button"
-              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-              className="md:hidden rounded-lg border border-[#ded5c8] px-3 py-2 text-xl"
-              aria-label="Open menu"
-            >
-              {mobileMenuOpen ? "✕" : "☰"}
-            </button>
-
-          </div>
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden rounded-lg border border-[#ded5c8] px-3 py-2 text-xl"
+            aria-label="Open menu"
+          >
+            {mobileMenuOpen ? "✕" : "☰"}
+          </button>
         </div>
-                {mobileMenuOpen && (
-          <div className="md:hidden border-t border-[#ded5c8] bg-[#f8f5ef] px-5 py-4">
-            <nav className="flex flex-col gap-4 text-sm">
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-[#ded5c8] bg-[#f8f5ef] px-6 py-4">
+            <nav className="flex flex-col gap-4 text-sm font-medium">
 
               <a
-                href="#home"
+                href="/"
                 onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b5e3c]"
+                className="hover:text-[#8b6f47]"
               >
                 Home
               </a>
@@ -130,7 +178,7 @@ export default function Home() {
               <a
                 href="/furniture"
                 onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b5e3c]"
+                className="hover:text-[#8b6f47]"
               >
                 Furniture
               </a>
@@ -138,48 +186,61 @@ export default function Home() {
               <a
                 href="/custom-furniture"
                 onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b5e3c]"
+                className="hover:text-[#8b6f47]"
               >
                 Custom Furniture
               </a>
 
               <a
-                href="/login"
+                href="/#process"
                 onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b5e3c]"
+                className="hover:text-[#8b6f47]"
               >
-                Login / My Account
+                About
               </a>
 
               <a
-                href="#process"
+                href="/#contact"
                 onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b5e3c]"
-              >
-                How It Works
-              </a>
-
-              <a
-                href="#contact"
-                onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b5e3c]"
+                className="hover:text-[#8b6f47]"
               >
                 Contact
               </a>
 
-              <a
-                href="/custom-furniture"
-                onClick={() => setMobileMenuOpen(false)}
-                className="mt-2 rounded-full bg-[#29251f] px-5 py-3 text-center text-sm font-semibold text-white"
-              >
-                Start a Project
-              </a>
-
+              {sessionUser ? (
+                <div className="flex flex-col gap-2 pt-2 border-t border-[#ded5c8]">
+                  <a
+                    href={isAdmin ? "/admin/dashboard" : "/account"}
+                    onClick={() => setMobileMenuOpen(false)}
+                    className="font-semibold text-[#8b6f47]"
+                  >
+                    👤 {isAdmin ? "Admin Dashboard" : "My Account"}
+                  </a>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      await supabase.auth.signOut();
+                      setSessionUser(null);
+                      setIsAdmin(false);
+                      setMobileMenuOpen(false);
+                    }}
+                    className="text-left text-xs text-red-600 hover:underline"
+                  >
+                    Logout
+                  </button>
+                </div>
+              ) : (
+                <a
+                  href="/login"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className="hover:text-[#8b6f47]"
+                >
+                  Login
+                </a>
+              )}
             </nav>
           </div>
         )}
-
-      
       </header>
 
       {/* HERO */}
@@ -247,7 +308,7 @@ export default function Home() {
           <div className="flex justify-center">
             <div className="flex aspect-square w-full max-w-lg items-center justify-center rounded-[2rem] bg-white p-10 shadow-xl">
               <img
-                src="/logo.jpg"
+                src="/gavika-logo.png"
                 alt="Gavika Furnitech Logo"
                 className="max-h-full max-w-full object-contain"
               />
@@ -321,43 +382,83 @@ export default function Home() {
           </h2>
         </div>
 
-        <div className="mt-12 grid gap-6 md:grid-cols-3">
-          {featuredProducts.map((product, index) => (
-            <div key={product.name} className="group">
-
+        {productsLoading ? (
+          <div className="mt-12 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3].map((n) => (
+              <div key={n} className="rounded-3xl bg-[#eee8de] animate-pulse h-80" />
+            ))}
+          </div>
+        ) : featuredProducts.length === 0 ? (
+          <div className="mt-12 text-center py-12 bg-white rounded-3xl border border-[#e7dccd]">
+            <p className="text-gray-500 text-sm">No catalogue designs published yet.</p>
+          </div>
+        ) : (
+          <div className="mt-12 grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {featuredProducts.map((product) => (
               <div
-                className={`aspect-[4/3] rounded-3xl ${
-                  index === 0
-                    ? "bg-[#8c6b4d]"
-                    : index === 1
-                      ? "bg-[#b49a7b]"
-                      : "bg-[#675542]"
-                }`}
+                key={product.id}
+                className="group flex flex-col justify-between overflow-hidden rounded-3xl bg-white border border-[#e7dccd] shadow-xs hover:shadow-md transition duration-300"
               >
-                <div className="flex h-full items-end rounded-3xl bg-black/10 p-6">
-                  <span className="rounded-full bg-white/90 px-4 py-2 text-xs font-semibold">
+                <div className="relative aspect-[4/3] w-full overflow-hidden bg-[#eee8de]">
+                  {product.image_url ? (
+                    <img
+                      src={product.image_url}
+                      alt={product.name}
+                      className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                    />
+                  ) : (
+                    <div className="flex h-full w-full items-center justify-center bg-[#8c6b4d] text-white text-3xl">
+                      🛋️
+                    </div>
+                  )}
+                  <div className="absolute left-4 top-4 rounded-full bg-white/95 backdrop-blur-xs px-3.5 py-1 text-xs font-semibold text-[#6f5635] shadow-xs">
                     {product.category}
-                  </span>
-                </div>
-              </div>
-
-              <div className="flex items-start justify-between gap-4 pt-5">
-                <div>
-                  <h3 className="text-xl font-semibold">
-                    {product.name}
-                  </h3>
-
-                  <p className="mt-1 text-sm text-[#746c62]">
-                    {product.price}
-                  </p>
+                  </div>
                 </div>
 
-                <button className="rounded-full border border-[#cfc4b5] px-4 py-2 text-sm font-medium transition hover:bg-[#29251f] hover:text-white">
-                  View
-                </button>
+                <div className="p-6 flex flex-col justify-between flex-1">
+                  <div>
+                    <h3 className="text-xl font-semibold text-[#29251f] group-hover:text-[#8b5e3c] transition">
+                      {product.name}
+                    </h3>
+                    {product.description && (
+                      <p className="mt-2 text-sm text-[#746c62] line-clamp-2">
+                        {product.description}
+                      </p>
+                    )}
+                  </div>
+
+                  <div className="mt-6 flex items-center justify-between border-t border-gray-100 pt-4">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-wider text-[#9a7748] font-semibold">
+                        Pricing
+                      </p>
+                      <p className="text-sm font-semibold text-[#29251f]">
+                        {product.price || "Custom Quote"}
+                      </p>
+                    </div>
+
+                    <a
+                      href={`/custom-furniture?design=${encodeURIComponent(product.id)}`}
+                      className="rounded-full bg-[#29251f] px-5 py-2 text-xs font-semibold text-white transition hover:bg-[#8b5e3c] shadow-xs"
+                    >
+                      Enquire Design →
+                    </a>
+                  </div>
+                </div>
               </div>
-            </div>
-          ))}
+            ))}
+          </div>
+        )}
+
+        <div className="mt-12 text-center">
+          <a
+            href="/furniture"
+            className="inline-flex items-center gap-2 rounded-full border border-[#cfc4b5] bg-white px-8 py-3.5 text-sm font-semibold text-[#29251f] transition hover:bg-[#29251f] hover:text-white shadow-xs"
+          >
+            <span>Explore All Furniture Designs</span>
+            <span>→</span>
+          </a>
         </div>
       </section>
 
@@ -567,7 +668,7 @@ export default function Home() {
 
             <div>
               <img
-                src="/logo.jpg"
+                src="/gavika-logo.png"
                 alt="Gavika Furnitech"
                 className="h-20 w-auto rounded-lg object-contain"
               />

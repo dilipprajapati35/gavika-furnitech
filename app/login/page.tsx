@@ -1,8 +1,8 @@
 "use client";
 
-import { FormEvent, useState } from "react";
-import { useRouter } from "next/navigation";
 import { supabase } from "@/utils/supabase/client";
+import { useRouter } from "next/navigation";
+import { FormEvent, useEffect, useState } from "react";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -23,6 +23,45 @@ export default function LoginPage() {
 
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [checkingAuth, setCheckingAuth] = useState(true);
+
+  useEffect(() => {
+    let isMounted = true;
+    async function checkExistingSession() {
+      try {
+        const {
+          data: { session },
+        } = await supabase.auth.getSession();
+        if (session?.user && session?.access_token && isMounted) {
+          const { data: adminUser } = await supabase
+            .from("admin_users")
+            .select("user_id")
+            .eq("user_id", session.user.id)
+            .maybeSingle();
+
+          if (!isMounted) return;
+
+          if (adminUser) {
+            router.replace("/admin/dashboard");
+            return;
+          }
+
+          router.replace("/account");
+          return;
+        }
+      } catch (err) {
+        console.error("Auth check error:", err);
+      }
+      if (isMounted) {
+        setCheckingAuth(false);
+      }
+    }
+
+    checkExistingSession();
+    return () => {
+      isMounted = false;
+    };
+  }, [router]);
 
   function clearForm() {
     setName("");
@@ -154,7 +193,7 @@ export default function LoginPage() {
           "Your account has been created. Please check your email to verify your account before logging in."
         );
       } else {
-        const { data, error: loginError } =
+        const { data: loginData, error: loginError } =
           await supabase.auth.signInWithPassword({
             email: cleanEmail,
             password,
@@ -167,12 +206,23 @@ export default function LoginPage() {
           return;
         }
 
-        if (!data.user) {
+        if (!loginData.user) {
           setError("Login failed. Please try again.");
           return;
         }
 
-        router.push("/account");
+        // Check if the user is an admin
+        const { data: adminUser } = await supabase
+          .from("admin_users")
+          .select("user_id")
+          .eq("user_id", loginData.user.id)
+          .maybeSingle();
+
+        if (adminUser) {
+          router.push("/admin/dashboard");
+        } else {
+          router.push("/account");
+        }
       }
     } finally {
       setLoading(false);
@@ -229,6 +279,14 @@ export default function LoginPage() {
     setIsSignup(false);
   }
 
+  if (checkingAuth) {
+    return (
+      <main className="min-h-screen bg-[#f5efe6] flex items-center justify-center p-4">
+        <div className="w-10 h-10 border-3 border-[#3d281c] border-t-transparent rounded-full animate-spin" />
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#f5efe6] flex items-center justify-center px-4 py-10">
       <div className="w-full max-w-md">
@@ -238,7 +296,7 @@ export default function LoginPage() {
           {/* Logo */}
           <div className="text-center mb-8">
             <img
-              src="/logo.jpg"
+              src="/gavika-logo.png"
               alt="Gavika Furnitech"
               className="h-20 w-20 object-contain mx-auto mb-4"
             />
@@ -247,16 +305,16 @@ export default function LoginPage() {
               {isForgotPassword
                 ? "Reset Password"
                 : isSignup
-                ? "Create Account"
-                : "Welcome Back"}
+                  ? "Create Account"
+                  : "Welcome Back"}
             </h1>
 
             <p className="text-sm text-gray-500 mt-2">
               {isForgotPassword
                 ? "Enter your email to receive a password reset link."
                 : isSignup
-                ? "Create your Gavika Furnitech account."
-                : "Log in to view your orders and projects."}
+                  ? "Create your Gavika Furnitech account."
+                  : "Log in to view your orders and projects."}
             </p>
           </div>
 
@@ -277,7 +335,7 @@ export default function LoginPage() {
                   autoComplete="name"
                   autoFocus
                   required
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235]"
                 />
               </div>
             )}
@@ -296,7 +354,7 @@ export default function LoginPage() {
                 autoComplete="email"
                 autoFocus={!isSignup}
                 required
-                className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235]"
+                className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235]"
               />
             </div>
 
@@ -320,7 +378,7 @@ export default function LoginPage() {
                     }
                     minLength={8}
                     required
-                    className="w-full rounded-lg border border-gray-300 px-4 py-3 pr-20 outline-none focus:border-[#7a5235]"
+                    className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 pr-20 outline-none focus:border-[#7a5235]"
                   />
 
                   <button
@@ -328,9 +386,19 @@ export default function LoginPage() {
                     onClick={() =>
                       setShowPassword(!showPassword)
                     }
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#7a5235]"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-[#7a5235] transition"
+                    aria-label={showPassword ? "Hide password" : "Show password"}
                   >
-                    {showPassword ? "Hide" : "Show"}
+                    {showPassword ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
                   </button>
                 </div>
 
@@ -363,7 +431,7 @@ export default function LoginPage() {
                     autoComplete="new-password"
                     minLength={8}
                     required
-                    className="w-full rounded-lg border border-gray-300 px-4 py-3 pr-20 outline-none focus:border-[#7a5235]"
+                    className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 pr-12 outline-none focus:border-[#7a5235]"
                   />
 
                   <button
@@ -373,9 +441,19 @@ export default function LoginPage() {
                         !showConfirmPassword
                       )
                     }
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-sm text-[#7a5235]"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-[#7a5235] transition"
+                    aria-label={showConfirmPassword ? "Hide password" : "Show password"}
                   >
-                    {showConfirmPassword ? "Hide" : "Show"}
+                    {showConfirmPassword ? (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
+                      </svg>
+                    ) : (
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                      </svg>
+                    )}
                   </button>
                 </div>
               </div>
@@ -421,10 +499,10 @@ export default function LoginPage() {
               {loading
                 ? "Please wait..."
                 : isForgotPassword
-                ? "Send Reset Link"
-                : isSignup
-                ? "Create Account"
-                : "Login"}
+                  ? "Send Reset Link"
+                  : isSignup
+                    ? "Create Account"
+                    : "Login"}
             </button>
           </form>
 

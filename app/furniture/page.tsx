@@ -1,26 +1,90 @@
 "use client";
 
-import { useState } from "react";
-import { products } from "@/data/products";
+import { supabase } from "@/utils/supabase/client";
+import { useEffect, useState } from "react";
 
-const categories = [
-  "All",
-  "Sofas",
-  "Beds",
-  "Dining",
-  "Wardrobes",
-  "Tables",
-  "Chairs",
-];
-
+type Product = {
+  id: string;
+  name: string;
+  category: string;
+  description: string;
+  price: string;
+  image: string;
+};
 
 export default function FurniturePage() {
+  const [productsList, setProductsList] = useState<Product[]>([]);
   const [selectedCategory, setSelectedCategory] = useState("All");
+  const [loading, setLoading] = useState(true);
+  const [sessionUser, setSessionUser] = useState<any>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSessionUser(session?.user || null);
+      if (session?.user) {
+        supabase
+          .from("admin_users")
+          .select("user_id")
+          .eq("user_id", session.user.id)
+          .maybeSingle()
+          .then(({ data }) => {
+            if (data) setIsAdmin(true);
+          });
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSessionUser(session?.user || null);
+      if (!session?.user) {
+        setIsAdmin(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    async function loadProducts() {
+      try {
+        const { data, error } = await supabase
+          .from("products")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (!error && data && data.length > 0) {
+          setProductsList(
+            data.map((p) => ({
+              id: p.id,
+              name: p.name,
+              category: p.category,
+              description: p.description || "",
+              price: p.price || "Custom Quote",
+              image: p.image_url,
+            }))
+          );
+        }
+      } catch (err) {
+        console.error("Failed to load products from database:", err);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadProducts();
+  }, []);
+
+  const categories = [
+    "All",
+    ...Array.from(new Set(productsList.map((p) => p.category))),
+  ];
 
   const filteredProducts =
     selectedCategory === "All"
-      ? products
-      : products.filter((product) => product.category === selectedCategory);
+      ? productsList
+      : productsList.filter((product) => product.category === selectedCategory);
 
   return (
     <main className="min-h-screen bg-[#f8f5ef] text-[#29251f]">
@@ -29,7 +93,7 @@ export default function FurniturePage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
           <a href="/" className="flex items-center gap-3">
             <img
-              src="/logo.jpg"
+              src="/gavika-logo.png"
               alt="Gavika Furnitech"
               className="h-14 w-auto object-contain"
             />
@@ -60,6 +124,32 @@ export default function FurniturePage() {
             <a href="/contact" className="hover:text-[#8b6f47]">
               Contact
             </a>
+            {sessionUser ? (
+              <div className="flex items-center gap-3">
+                <a
+                  href={isAdmin ? "/admin/dashboard" : "/account"}
+                  className="font-semibold text-[#8b6f47] flex items-center gap-1.5 hover:text-[#5a3927] transition"
+                >
+                  <span>👤</span>
+                  <span>{isAdmin ? "Admin Dashboard" : "My Account"}</span>
+                </a>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    await supabase.auth.signOut();
+                    setSessionUser(null);
+                    setIsAdmin(false);
+                  }}
+                  className="text-xs text-gray-400 hover:text-red-600 transition"
+                >
+                  Logout
+                </button>
+              </div>
+            ) : (
+              <a href="/login" className="hover:text-[#8b6f47]">
+                Login
+              </a>
+            )}
           </nav>
         </div>
       </header>
@@ -91,11 +181,10 @@ export default function FurniturePage() {
             <button
               key={category}
               onClick={() => setSelectedCategory(category)}
-              className={`rounded-full px-5 py-2.5 text-sm font-medium transition ${
-                selectedCategory === category
+              className={`rounded-full px-5 py-2.5 text-sm font-medium transition ${selectedCategory === category
                   ? "bg-[#29251f] text-white"
                   : "border border-[#d7cdbd] bg-white text-[#5f574d] hover:border-[#8b6f47]"
-              }`}
+                }`}
             >
               {category}
             </button>
@@ -117,57 +206,89 @@ export default function FurniturePage() {
           </div>
 
           <p className="hidden text-sm text-[#746c62] md:block">
-            {filteredProducts.length} designs
+            {loading ? "Loading..." : `${filteredProducts.length} designs`}
           </p>
         </div>
 
-        <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
-          {filteredProducts.map((product) => (
-            <article
-              key={product.name}
-              className="group overflow-hidden rounded-2xl border border-[#e2dbcf] bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl"
-            >
-              {/* Image */}
-              <div className="relative aspect-[4/3] overflow-hidden bg-[#eee8de]">
-                <img
-                  src={product.image}
-                  alt={product.name}
-                  className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                />
-
-                <div className="absolute left-4 top-4 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-[#6f5635]">
-                  {product.category}
-                </div>
-              </div>
-
-              {/* Details */}
-              <div className="p-6">
-                <h3 className="text-xl font-semibold">{product.name}</h3>
-
-                <p className="mt-3 min-h-[52px] text-sm leading-6 text-[#746c62]">
-                  {product.description}
-                </p>
-
-                <div className="mt-5 flex items-center justify-between">
-                  <div>
-                    <p className="text-xs uppercase tracking-wider text-[#9a7748]">
-                      Pricing
-                    </p>
-
-                    <p className="mt-1 font-semibold">{product.price}</p>
+        {loading ? (
+          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {[1, 2, 3, 4, 5, 6].map((i) => (
+              <div
+                key={i}
+                className="overflow-hidden rounded-2xl border border-[#e2dbcf] bg-white p-0 shadow-xs animate-pulse"
+              >
+                <div className="aspect-[4/3] bg-[#eee8de]" />
+                <div className="p-6 space-y-4">
+                  <div className="h-6 w-3/4 rounded-md bg-[#e2dbcf]" />
+                  <div className="space-y-2">
+                    <div className="h-4 w-full rounded bg-[#ede7dc]" />
+                    <div className="h-4 w-2/3 rounded bg-[#ede7dc]" />
                   </div>
-
-                  <a
-                    href={`/custom-furniture?design=${encodeURIComponent(product.id)}`}
-                    className="rounded-full bg-[#29251f] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[#8b6f47]"
-                  >
-                    Enquire
-                  </a>
+                  <div className="pt-2 flex justify-between items-center">
+                    <div className="h-4 w-20 rounded bg-[#e2dbcf]" />
+                    <div className="h-9 w-24 rounded-full bg-[#e2dbcf]" />
+                  </div>
                 </div>
               </div>
-            </article>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : filteredProducts.length === 0 ? (
+          <div className="py-20 text-center rounded-2xl bg-white border border-[#e2dbcf] p-8">
+            <div className="text-4xl mb-3">🛋️</div>
+            <h3 className="text-xl font-semibold text-[#29251f]">No designs found</h3>
+            <p className="text-sm text-[#746c62] mt-1">
+              There are no products listed under the &quot;{selectedCategory}&quot; category yet.
+            </p>
+          </div>
+        ) : (
+          <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+            {filteredProducts.map((product) => (
+              <article
+                key={product.id || product.name}
+                className="group overflow-hidden rounded-2xl border border-[#e2dbcf] bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl"
+              >
+                {/* Image */}
+                <div className="relative aspect-[4/3] overflow-hidden bg-[#eee8de]">
+                  <img
+                    src={product.image}
+                    alt={product.name}
+                    className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
+                  />
+
+                  <div className="absolute left-4 top-4 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-[#6f5635]">
+                    {product.category}
+                  </div>
+                </div>
+
+                {/* Details */}
+                <div className="p-6">
+                  <h3 className="text-xl font-semibold">{product.name}</h3>
+
+                  <p className="mt-3 min-h-[52px] text-sm leading-6 text-[#746c62]">
+                    {product.description}
+                  </p>
+
+                  <div className="mt-5 flex items-center justify-between">
+                    <div>
+                      <p className="text-xs uppercase tracking-wider text-[#9a7748]">
+                        Pricing
+                      </p>
+
+                      <p className="mt-1 font-semibold">{product.price}</p>
+                    </div>
+
+                    <a
+                      href={`/custom-furniture?design=${encodeURIComponent(product.id)}`}
+                      className="rounded-full bg-[#29251f] px-5 py-2.5 text-sm font-medium text-white transition hover:bg-[#8b6f47]"
+                    >
+                      Enquire
+                    </a>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        )}
       </section>
 
       {/* Custom Furniture CTA */}
@@ -205,7 +326,7 @@ export default function FurniturePage() {
         <div className="mx-auto flex max-w-7xl flex-col gap-5 px-6 py-10 md:flex-row md:items-center md:justify-between">
           <div className="flex items-center gap-3">
             <img
-              src="/logo.jpg"
+              src="/gavika-logo.png"
               alt="Gavika Furnitech"
               className="h-12 w-auto object-contain"
             />
