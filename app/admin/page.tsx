@@ -84,7 +84,7 @@ export default function AdminLogin() {
                 onChange={(e) => setEmail(e.target.value)}
                 placeholder="Enter admin email"
                 required
-                className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235]"
+                className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235]"
               />
             </div>
 
@@ -99,7 +99,7 @@ export default function AdminLogin() {
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="Enter admin password"
                 required
-                className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235]"
+                className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235]"
               />
             </div>
 

@@ -277,7 +277,7 @@ export default function LoginPage() {
                   autoComplete="name"
                   autoFocus
                   required
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235]"
                 />
               </div>
             )}
@@ -296,7 +296,7 @@ export default function LoginPage() {
                 autoComplete="email"
                 autoFocus={!isSignup}
                 required
-                className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235]"
+                className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235]"
               />
             </div>
 
@@ -320,7 +320,7 @@ export default function LoginPage() {
                     }
                     minLength={8}
                     required
-                    className="w-full rounded-lg border border-gray-300 px-4 py-3 pr-20 outline-none focus:border-[#7a5235]"
+                    className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 pr-20 outline-none focus:border-[#7a5235]"
                   />
 
                   <button
@@ -363,7 +363,7 @@ export default function LoginPage() {
                     autoComplete="new-password"
                     minLength={8}
                     required
-                    className="w-full rounded-lg border border-gray-300 px-4 py-3 pr-20 outline-none focus:border-[#7a5235]"
+                    className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 pr-20 outline-none focus:border-[#7a5235]"
                   />
 
                   <button

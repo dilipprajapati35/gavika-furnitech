@@ -368,7 +368,7 @@ function CustomFurnitureContent() {
                   required
                   autoComplete="name"
                   placeholder="Enter your full name"
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
                 />
               </div>
 
@@ -383,7 +383,7 @@ function CustomFurnitureContent() {
                   required
                   autoComplete="tel"
                   placeholder="Enter mobile number"
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
                 />
               </div>
 
@@ -398,7 +398,7 @@ function CustomFurnitureContent() {
                   defaultValue={userEmail}
                   autoComplete="email"
                   placeholder="Enter email address"
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
                 />
               </div>
             </div>
@@ -419,7 +419,7 @@ function CustomFurnitureContent() {
                   name="furniture_type"
                   required
                   defaultValue=""
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 bg-white outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
                 >
                   <option value="" disabled>
                     Select furniture type
@@ -449,7 +449,7 @@ function CustomFurnitureContent() {
                   type="text"
                   required
                   placeholder="Example: Bedroom"
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
                 />
               </div>
             </div>
@@ -475,7 +475,7 @@ function CustomFurnitureContent() {
                   name="length"
                   type="text"
                   placeholder="Example: 6 ft"
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
                 />
               </div>
 
@@ -488,7 +488,7 @@ function CustomFurnitureContent() {
                   name="width"
                   type="text"
                   placeholder="Example: 3 ft"
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
                 />
               </div>
 
@@ -501,7 +501,7 @@ function CustomFurnitureContent() {
                   name="height"
                   type="text"
                   placeholder="Example: 3 ft"
-                  className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
                 />
               </div>
             </div>
@@ -515,7 +515,7 @@ function CustomFurnitureContent() {
             <select
               name="preferred_material"
               defaultValue=""
-              className="w-full rounded-lg border border-gray-300 px-4 py-3 bg-white outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+              className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
             >
               <option value="" disabled>
                 Select preferred material
@@ -540,7 +540,7 @@ function CustomFurnitureContent() {
               rows={6}
               required
               placeholder="Describe your furniture requirement, design preference, storage needs, colour, finish, etc."
-              className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none resize-y focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+              className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none resize-y focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
             />
           </div>
 
@@ -553,7 +553,7 @@ function CustomFurnitureContent() {
               name="reference_image"
               type="file"
               accept="image/jpeg,image/png,image/webp"
-              className="w-full rounded-lg border border-gray-300 px-4 py-3 bg-white text-sm"
+              className="w-full rounded-lg border border-gray-300 px-4 py-3 bg-white text-gray-900 text-sm"
             />
 
             <p className="text-xs text-gray-500 mt-2">
@@ -571,7 +571,7 @@ function CustomFurnitureContent() {
               rows={3}
               required
               placeholder="Enter your delivery location"
-              className="w-full rounded-lg border border-gray-300 px-4 py-3 outline-none resize-y focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+              className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none resize-y focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
             />
           </div>
 
