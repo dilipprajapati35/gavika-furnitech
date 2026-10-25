@@ -1,7 +1,7 @@
 "use client";
 import { useSearchParams } from "next/navigation";
 
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/utils/supabase/client";
 import { products } from "@/data/products";
@@ -13,7 +13,7 @@ function generateRequestId() {
   return `GF-${year}-${randomNumber}`;
 }
 
-export default function CustomFurniturePage() {
+function CustomFurnitureContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const selectedDesign = searchParams.get("design");
@@ -592,5 +592,19 @@ export default function CustomFurniturePage() {
         </form>
       </section>
     </main>
+  );
+}
+
+export default function CustomFurniturePage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-[#fcfaf7] flex items-center justify-center text-gray-500">
+          Loading custom furniture form...
+        </div>
+      }
+    >
+      <CustomFurnitureContent />
+    </Suspense>
   );
 }
