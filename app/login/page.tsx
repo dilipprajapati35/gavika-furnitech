@@ -25,6 +25,20 @@ export default function LoginPage() {
   const [error, setError] = useState("");
   const [checkingAuth, setCheckingAuth] = useState(true);
 
+  // Field-level inline errors
+  const [fieldErrors, setFieldErrors] = useState<{
+    name?: string;
+    email?: string;
+    password?: string;
+    confirmPassword?: string;
+  }>({});
+  const [touched, setTouched] = useState<{
+    name?: boolean;
+    email?: boolean;
+    password?: boolean;
+    confirmPassword?: boolean;
+  }>({});
+
   useEffect(() => {
     let isMounted = true;
     async function checkExistingSession() {
@@ -70,6 +84,8 @@ export default function LoginPage() {
     setConfirmPassword("");
     setError("");
     setMessage("");
+    setFieldErrors({});
+    setTouched({});
     setShowPassword(false);
     setShowConfirmPassword(false);
   }
@@ -88,6 +104,48 @@ export default function LoginPage() {
     );
   }
 
+  function validateAuthField(field: string, val: string): string {
+    switch (field) {
+      case "name": {
+        const trimmed = val.trim();
+        if (!trimmed) return "Full Name is required.";
+        if (trimmed.length < 2) return "Full Name must be at least 2 characters.";
+        if (!/^[a-zA-Z\s.'-]+$/.test(trimmed)) {
+          return "Full Name should contain letters and spaces only.";
+        }
+        return "";
+      }
+      case "email": {
+        const clean = val.trim().toLowerCase();
+        if (!clean) return "Email address is required.";
+        if (!isValidEmail(clean)) {
+          return "Please enter a valid email address (e.g. name@domain.com).";
+        }
+        return "";
+      }
+      case "password": {
+        if (!val) return "Password is required.";
+        if (!isSignup) {
+          if (val.length < 6) return "Password must be at least 6 characters.";
+          return "";
+        }
+        if (val.length < 8) return "Password must be at least 8 characters.";
+        if (!/[A-Z]/.test(val)) return "Include at least one uppercase letter (A-Z).";
+        if (!/[a-z]/.test(val)) return "Include at least one lowercase letter (a-z).";
+        if (!/\d/.test(val)) return "Include at least one number (0-9).";
+        if (!/[^A-Za-z0-9]/.test(val)) return "Include at least one special character (!@#$%^&*).";
+        return "";
+      }
+      case "confirmPassword": {
+        if (!val) return "Please confirm your password.";
+        if (val !== password) return "Passwords do not match.";
+        return "";
+      }
+      default:
+        return "";
+    }
+  }
+
   async function handleSubmit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
 
@@ -96,56 +154,39 @@ export default function LoginPage() {
 
     const cleanEmail = email.trim().toLowerCase();
 
-    if (!isValidEmail(cleanEmail)) {
-      setError("Please enter a valid email address.");
-      return;
-    }
+    // Field-level error validation
+    const errors: {
+      name?: string;
+      email?: string;
+      password?: string;
+      confirmPassword?: string;
+    } = {};
 
-    if (isForgotPassword) {
-      setLoading(true);
+    const emailErr = validateAuthField("email", cleanEmail);
+    if (emailErr) errors.email = emailErr;
 
-      try {
-        const { error: resetError } =
-          await supabase.auth.resetPasswordForEmail(cleanEmail, {
-            redirectTo: `${window.location.origin}/reset-password`,
-          });
-
-        if (resetError) {
-          setError(
-            "We could not process your request. Please try again."
-          );
-          return;
-        }
-
-        setMessage(
-          "If an account exists with this email, a password reset link has been sent."
-        );
-      } finally {
-        setLoading(false);
-      }
-
-      return;
+    if (!isForgotPassword) {
+      const passErr = validateAuthField("password", password);
+      if (passErr) errors.password = passErr;
     }
 
     if (isSignup) {
-      const cleanName = name.trim();
+      const nameErr = validateAuthField("name", name);
+      if (nameErr) errors.name = nameErr;
 
-      if (cleanName.length < 2) {
-        setError("Please enter your full name.");
-        return;
-      }
+      const confirmErr = validateAuthField("confirmPassword", confirmPassword);
+      if (confirmErr) errors.confirmPassword = confirmErr;
+    }
 
-      if (!isStrongPassword(password)) {
-        setError(
-          "Password must contain at least 8 characters, including uppercase, lowercase, number, and special character."
-        );
-        return;
-      }
-
-      if (password !== confirmPassword) {
-        setError("Passwords do not match.");
-        return;
-      }
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setTouched({
+        name: true,
+        email: true,
+        password: true,
+        confirmPassword: true,
+      });
+      return;
     }
 
     setLoading(true);
@@ -318,74 +359,151 @@ export default function LoginPage() {
             </p>
           </div>
 
-          <form onSubmit={handleSubmit} className="space-y-5">
+          <form onSubmit={handleSubmit} noValidate className="space-y-5">
 
             {/* Full Name */}
             {isSignup && !isForgotPassword && (
               <div>
                 <label className="block text-sm font-medium text-[#3d281c] mb-2">
-                  Full Name
+                  Full Name <span className="text-red-500">*</span>
                 </label>
 
                 <input
                   type="text"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setName(val);
+                    if (touched.name) {
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        name: validateAuthField("name", val),
+                      }));
+                    }
+                  }}
+                  onBlur={() => {
+                    setTouched((prev) => ({ ...prev, name: true }));
+                    setFieldErrors((prev) => ({
+                      ...prev,
+                      name: validateAuthField("name", name),
+                    }));
+                  }}
                   placeholder="Enter your full name"
                   autoComplete="name"
                   autoFocus
-                  required
-                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235]"
+                  className={`w-full rounded-lg border bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none transition ${
+                    touched.name && fieldErrors.name
+                      ? "border-red-500 focus:border-red-500 bg-red-50/20"
+                      : "border-gray-300 focus:border-[#7a5235]"
+                  }`}
                 />
+                {touched.name && fieldErrors.name && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.name}</span>
+                  </p>
+                )}
               </div>
             )}
 
             {/* Email */}
             <div>
               <label className="block text-sm font-medium text-[#3d281c] mb-2">
-                Email Address
+                Email Address <span className="text-red-500">*</span>
               </label>
 
               <input
                 type="email"
                 value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                onChange={(e) => {
+                  const val = e.target.value;
+                  setEmail(val);
+                  if (touched.email) {
+                    setFieldErrors((prev) => ({
+                      ...prev,
+                      email: validateAuthField("email", val),
+                    }));
+                  }
+                }}
+                onBlur={() => {
+                  setTouched((prev) => ({ ...prev, email: true }));
+                  setFieldErrors((prev) => ({
+                    ...prev,
+                    email: validateAuthField("email", email),
+                  }));
+                }}
                 placeholder="Enter your email"
                 autoComplete="email"
                 autoFocus={!isSignup}
-                required
-                className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235]"
+                className={`w-full rounded-lg border bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none transition ${
+                  touched.email && fieldErrors.email
+                    ? "border-red-500 focus:border-red-500 bg-red-50/20"
+                    : "border-gray-300 focus:border-[#7a5235]"
+                }`}
               />
+              {touched.email && fieldErrors.email && (
+                <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                  <span>⚠️</span>
+                  <span>{fieldErrors.email}</span>
+                </p>
+              )}
             </div>
 
             {/* Password */}
             {!isForgotPassword && (
               <div>
                 <label className="block text-sm font-medium text-[#3d281c] mb-2">
-                  Password
+                  Password <span className="text-red-500">*</span>
                 </label>
 
                 <div className="relative">
                   <input
                     type={showPassword ? "text" : "password"}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Enter your password"
-                    autoComplete={
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setPassword(val);
+                      if (touched.password) {
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          password: validateAuthField("password", val),
+                        }));
+                      }
+                      if (touched.confirmPassword && confirmPassword) {
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          confirmPassword:
+                            val !== confirmPassword
+                              ? "Passwords do not match."
+                              : "",
+                        }));
+                      }
+                    }}
+                    onBlur={() => {
+                      setTouched((prev) => ({ ...prev, password: true }));
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        password: validateAuthField("password", password),
+                      }));
+                    }}
+                    placeholder={
                       isSignup
-                        ? "new-password"
-                        : "current-password"
+                        ? "Create a strong password"
+                        : "Enter your password"
                     }
-                    minLength={8}
-                    required
-                    className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 pr-20 outline-none focus:border-[#7a5235]"
+                    autoComplete={
+                      isSignup ? "new-password" : "current-password"
+                    }
+                    className={`w-full rounded-lg border bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 pr-12 outline-none transition ${
+                      touched.password && fieldErrors.password
+                        ? "border-red-500 focus:border-red-500 bg-red-50/20"
+                        : "border-gray-300 focus:border-[#7a5235]"
+                    }`}
                   />
 
                   <button
                     type="button"
-                    onClick={() =>
-                      setShowPassword(!showPassword)
-                    }
+                    onClick={() => setShowPassword(!showPassword)}
                     className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-[#7a5235] transition"
                     aria-label={showPassword ? "Hide password" : "Show password"}
                   >
@@ -402,11 +520,37 @@ export default function LoginPage() {
                   </button>
                 </div>
 
-                {isSignup && (
-                  <p className="text-xs text-gray-500 mt-2">
-                    At least 8 characters with uppercase, lowercase,
-                    number, and special character.
+                {touched.password && fieldErrors.password && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.password}</span>
                   </p>
+                )}
+
+                {/* Password strength checklist for Signup */}
+                {isSignup && (
+                  <div className="mt-2.5 p-3 bg-stone-50 rounded-lg border border-stone-200 text-xs space-y-1.5">
+                    <p className="font-semibold text-stone-700">
+                      Password Requirements:
+                    </p>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-1 text-[11px]">
+                      <span className={password.length >= 8 ? "text-emerald-700 font-medium" : "text-gray-400"}>
+                        {password.length >= 8 ? "✓" : "○"} At least 8 characters
+                      </span>
+                      <span className={/[A-Z]/.test(password) ? "text-emerald-700 font-medium" : "text-gray-400"}>
+                        {/[A-Z]/.test(password) ? "✓" : "○"} Uppercase letter (A-Z)
+                      </span>
+                      <span className={/[a-z]/.test(password) ? "text-emerald-700 font-medium" : "text-gray-400"}>
+                        {/[a-z]/.test(password) ? "✓" : "○"} Lowercase letter (a-z)
+                      </span>
+                      <span className={/\d/.test(password) ? "text-emerald-700 font-medium" : "text-gray-400"}>
+                        {/\d/.test(password) ? "✓" : "○"} Number (0-9)
+                      </span>
+                      <span className={/[^A-Za-z0-9]/.test(password) ? "text-emerald-700 font-medium sm:col-span-2" : "text-gray-400 sm:col-span-2"}>
+                        {/[^A-Za-z0-9]/.test(password) ? "✓" : "○"} Special character (!@#$%^&*)
+                      </span>
+                    </div>
+                  </div>
                 )}
               </div>
             )}
@@ -415,31 +559,46 @@ export default function LoginPage() {
             {isSignup && !isForgotPassword && (
               <div>
                 <label className="block text-sm font-medium text-[#3d281c] mb-2">
-                  Confirm Password
+                  Confirm Password <span className="text-red-500">*</span>
                 </label>
 
                 <div className="relative">
                   <input
-                    type={
-                      showConfirmPassword ? "text" : "password"
-                    }
+                    type={showConfirmPassword ? "text" : "password"}
                     value={confirmPassword}
-                    onChange={(e) =>
-                      setConfirmPassword(e.target.value)
-                    }
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setConfirmPassword(val);
+                      if (touched.confirmPassword) {
+                        setFieldErrors((prev) => ({
+                          ...prev,
+                          confirmPassword: validateAuthField("confirmPassword", val),
+                        }));
+                      }
+                    }}
+                    onBlur={() => {
+                      setTouched((prev) => ({ ...prev, confirmPassword: true }));
+                      setFieldErrors((prev) => ({
+                        ...prev,
+                        confirmPassword: validateAuthField(
+                          "confirmPassword",
+                          confirmPassword
+                        ),
+                      }));
+                    }}
                     placeholder="Confirm your password"
                     autoComplete="new-password"
-                    minLength={8}
-                    required
-                    className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 pr-12 outline-none focus:border-[#7a5235]"
+                    className={`w-full rounded-lg border bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 pr-12 outline-none transition ${
+                      touched.confirmPassword && fieldErrors.confirmPassword
+                        ? "border-red-500 focus:border-red-500 bg-red-50/20"
+                        : "border-gray-300 focus:border-[#7a5235]"
+                    }`}
                   />
 
                   <button
                     type="button"
                     onClick={() =>
-                      setShowConfirmPassword(
-                        !showConfirmPassword
-                      )
+                      setShowConfirmPassword(!showConfirmPassword)
                     }
                     className="absolute right-3 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-[#7a5235] transition"
                     aria-label={showConfirmPassword ? "Hide password" : "Show password"}
@@ -456,6 +615,13 @@ export default function LoginPage() {
                     )}
                   </button>
                 </div>
+
+                {touched.confirmPassword && fieldErrors.confirmPassword && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.confirmPassword}</span>
+                  </p>
+                )}
               </div>
             )}
 

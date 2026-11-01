@@ -94,8 +94,11 @@ create table if not exists public.products (
   description text,
   price text default 'Custom Quote',
   image_url text not null,
+  images text[] default '{}',
   created_at timestamp with time zone default timezone('utc'::text, now()) not null
 );
+
+alter table public.products add column if not exists images text[] default '{}';
 
 
 
@@ -121,7 +124,22 @@ drop policy if exists "Users can check their own admin status" on public.admin_u
 create policy "Users can check their own admin status"
   on public.admin_users for select
   to authenticated
-  using (auth.uid() = user_id);
+  using (
+    auth.uid() = user_id or
+    exists (select 1 from public.admin_users au where au.user_id = auth.uid())
+  );
+
+drop policy if exists "Admins can insert admin users" on public.admin_users;
+create policy "Admins can insert admin users"
+  on public.admin_users for insert
+  to authenticated
+  with check (exists (select 1 from public.admin_users au where au.user_id = auth.uid()));
+
+drop policy if exists "Admins can delete admin users" on public.admin_users;
+create policy "Admins can delete admin users"
+  on public.admin_users for delete
+  to authenticated
+  using (exists (select 1 from public.admin_users au where au.user_id = auth.uid()));
 
 -- Custom Requests Policies
 drop policy if exists "Users can create custom requests" on public.custom_requests;
@@ -135,7 +153,7 @@ create policy "Users can view their own requests"
   on public.custom_requests for select
   to authenticated
   using (
-    auth.uid() = user_id or 
+    auth.uid() = user_id or
     exists (select 1 from public.admin_users where user_id = auth.uid())
   );
 
@@ -144,7 +162,15 @@ create policy "Users and Admins can update requests"
   on public.custom_requests for update
   to authenticated
   using (
-    auth.uid() = user_id or 
+    auth.uid() = user_id or
+    exists (select 1 from public.admin_users where user_id = auth.uid())
+  );
+
+drop policy if exists "Admins can delete custom requests" on public.custom_requests;
+create policy "Admins can delete custom requests"
+  on public.custom_requests for delete
+  to authenticated
+  using (
     exists (select 1 from public.admin_users where user_id = auth.uid())
   );
 
@@ -191,7 +217,7 @@ create policy "Users and Admins can view orders"
   on public.orders for select
   to authenticated
   using (
-    auth.uid() = user_id or 
+    auth.uid() = user_id or
     exists (select 1 from public.admin_users where user_id = auth.uid())
   );
 
@@ -245,7 +271,7 @@ create policy "Allow admins to delete material_preferences"
 
 -- Insert initial default options
 insert into public.furniture_types (name)
-values 
+values
   ('Sofa'),
   ('Bed'),
   ('Dining Table'),
@@ -258,7 +284,7 @@ values
 on conflict (name) do nothing;
 
 insert into public.material_preferences (name)
-values 
+values
   ('Plywood'),
   ('MDF'),
   ('Solid Wood'),
@@ -295,7 +321,7 @@ create policy "Allow admins to delete products"
 
 -- Seed default products
 insert into public.products (name, category, description, price, image_url)
-values 
+values
   ('Modern Luxury Sofa', 'Sofas', 'Premium contemporary sofa designed for elegant living spaces.', 'Custom Quote', 'https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=900&q=80'),
   ('Premium Wooden Bed', 'Beds', 'Elegant wooden bed with a strong and timeless design.', 'Custom Quote', 'https://images.unsplash.com/photo-1505693416388-ac5ce068fe85?auto=format&fit=crop&w=900&q=80'),
   ('Luxury Dining Table', 'Dining', 'Beautiful dining table crafted for modern Indian homes.', 'Custom Quote', 'https://images.unsplash.com/photo-1617104678098-de229db51175?auto=format&fit=crop&w=900&q=80'),
@@ -320,6 +346,12 @@ create policy "Allow public viewing of project files"
 drop policy if exists "Allow authenticated updates" on storage.objects;
 create policy "Allow authenticated updates"
   on storage.objects for update
+  to authenticated
+  using (bucket_id = 'gavika-project-files');
+
+drop policy if exists "Allow authenticated deletions" on storage.objects;
+create policy "Allow authenticated deletions"
+  on storage.objects for delete
   to authenticated
   using (bucket_id = 'gavika-project-files');
 
@@ -485,3 +517,160 @@ $$;
 grant execute on function public.create_quotation to authenticated;
 grant execute on function public.respond_to_quotation to authenticated;
 grant execute on function public.create_order_from_quotation to authenticated;
+
+-- ==============================================================================
+-- 6. USER MANAGEMENT FUNCTIONS (ADMIN PORTAL)
+-- ==============================================================================
+
+-- Procedure: Get list of all registered users with activity & role
+create or replace function public.get_admin_users_list()
+returns table (
+  id uuid,
+  email text,
+  full_name text,
+  mobile text,
+  is_admin boolean,
+  created_at timestamp with time zone,
+  last_sign_in_at timestamp with time zone,
+  total_requests bigint,
+  total_orders bigint
+)
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'Unauthorized: Only administrators can view user management.';
+  end if;
+
+  return query
+  select
+    u.id,
+    u.email::text,
+    coalesce(
+      nullif(u.raw_user_meta_data->>'full_name', ''),
+      (select cr.full_name from public.custom_requests cr where cr.user_id = u.id order by cr.created_at desc limit 1),
+      split_part(u.email::text, '@', 1)
+    )::text as full_name,
+    coalesce(
+      nullif(u.raw_user_meta_data->>'mobile', ''),
+      u.phone::text,
+      (select cr.mobile from public.custom_requests cr where cr.user_id = u.id order by cr.created_at desc limit 1),
+      '-'
+    )::text as mobile,
+    exists (select 1 from public.admin_users au where au.user_id = u.id) as is_admin,
+    u.created_at,
+    u.last_sign_in_at,
+    (select count(*) from public.custom_requests cr where cr.user_id = u.id)::bigint as total_requests,
+    (select count(*) from public.orders o where o.user_id = u.id)::bigint as total_orders
+  from auth.users u
+  order by u.created_at desc;
+end;
+$$;
+
+-- Procedure: Grant or revoke admin role for a user
+create or replace function public.set_user_admin_role(p_user_id uuid, p_make_admin boolean)
+returns boolean
+language plpgsql
+security definer
+as $$
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'Unauthorized';
+  end if;
+
+  if p_make_admin then
+    insert into public.admin_users (user_id)
+    values (p_user_id)
+    on conflict (user_id) do nothing;
+  else
+    if p_user_id = auth.uid() and (select count(*) from public.admin_users) <= 1 then
+      raise exception 'Cannot remove the last remaining administrator.';
+    end if;
+    delete from public.admin_users where user_id = p_user_id;
+  end if;
+
+  return true;
+end;
+$$;
+
+-- Procedure: Add admin user by email address
+create or replace function public.add_admin_by_email(p_email text)
+returns json
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+declare
+  v_target_user_id uuid;
+  v_user_email text;
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'Unauthorized';
+  end if;
+
+  select id, email into v_target_user_id, v_user_email
+  from auth.users
+  where lower(email) = lower(trim(p_email));
+
+  if v_target_user_id is null then
+    return json_build_object('success', false, 'message', 'No registered user found with that email address.');
+  end if;
+
+  insert into public.admin_users (user_id)
+  values (v_target_user_id)
+  on conflict (user_id) do nothing;
+
+  return json_build_object('success', true, 'message', 'Admin privileges granted successfully.', 'user_id', v_target_user_id);
+end;
+$$;
+
+-- Procedure: Delete a user by admin
+create or replace function public.delete_user_by_admin(p_user_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'Unauthorized';
+  end if;
+
+  if p_user_id = auth.uid() then
+    raise exception 'You cannot delete your own administrative account.';
+  end if;
+
+  delete from auth.users where id = p_user_id;
+  return true;
+end;
+$$;
+
+-- Procedure: Delete a custom request by admin
+create or replace function public.delete_custom_request_by_admin(p_request_id uuid)
+returns boolean
+language plpgsql
+security definer
+set search_path = public, auth
+as $$
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'Unauthorized: Only administrators can delete customer requests.';
+  end if;
+
+  -- Delete associated orders and quotations first
+  delete from public.orders where request_id = p_request_id;
+  delete from public.quotations where request_id = p_request_id;
+  delete from public.custom_requests where id = p_request_id;
+
+  return true;
+end;
+$$;
+
+-- Grant permissions for user management functions
+grant execute on function public.get_admin_users_list to authenticated;
+grant execute on function public.set_user_admin_role to authenticated;
+grant execute on function public.add_admin_by_email to authenticated;
+grant execute on function public.delete_user_by_admin to authenticated;
+grant execute on function public.delete_custom_request_by_admin to authenticated;
