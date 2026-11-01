@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
-import Link from "next/link";
 import { supabase } from "@/utils/supabase/client";
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useState } from "react";
 
 interface CustomProject {
   id: string;
@@ -319,7 +319,7 @@ export default function ProjectDetailsPage() {
           catalogue_design_image_url
         `)
         .eq("id", projectId)
-        .eq("user_id", user.id) 
+        .eq("user_id", user.id)
         .single();
 
       if (projectError) {
@@ -446,7 +446,7 @@ export default function ProjectDetailsPage() {
           }
         }
 
-        
+
         setQuotation(currentQuotation);
       }
 
@@ -528,11 +528,10 @@ export default function ProjectDetailsPage() {
 
   const dimensions =
     project.length ||
-    project.width ||
-    project.height
-      ? `${project.length || "-"} × ${
-          project.width || "-"
-        } × ${project.height || "-"}`
+      project.width ||
+      project.height
+      ? `${project.length || "-"} × ${project.width || "-"
+      } × ${project.height || "-"}`
       : "Not specified";
 
   const submittedDate = new Date(
@@ -555,7 +554,7 @@ export default function ProjectDetailsPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
           <Link href="/" className="flex items-center gap-3">
             <img
-              src="/gavika-logo.png"
+              src="/Gavika-new-logo.png"
               alt="Gavika Furnitech"
               className="h-14 w-auto object-contain"
             />
@@ -746,7 +745,7 @@ export default function ProjectDetailsPage() {
             </div>
           </div>
         )}
-        
+
         {/* Customer Reference Image */}
         {project.reference_image_url && (
           <div className="bg-white rounded-2xl border border-[#e7dccd] shadow-sm p-6 md:p-8 mb-6">
@@ -815,14 +814,14 @@ export default function ProjectDetailsPage() {
                         currentStep >= 5
                           ? "84%"
                           : currentStep === 4
-                          ? "67%"
-                          : currentStep === 3
-                          ? "50%"
-                          : currentStep === 2
-                          ? "33%"
-                          : currentStep === 1
-                          ? "17%"
-                          : "0%",
+                            ? "67%"
+                            : currentStep === 3
+                              ? "50%"
+                              : currentStep === 2
+                                ? "33%"
+                                : currentStep === 1
+                                  ? "17%"
+                                  : "0%",
                     }}
                   />
 
@@ -841,13 +840,12 @@ export default function ProjectDetailsPage() {
                             className="flex flex-col items-center text-center"
                           >
                             <div
-                              className={`h-14 w-14 rounded-full flex items-center justify-center text-2xl border-4 border-white shadow-sm z-10 ${
-                                completed
+                              className={`h-14 w-14 rounded-full flex items-center justify-center text-2xl border-4 border-white shadow-sm z-10 ${completed
                                   ? "bg-[#8b5e3c] text-white"
                                   : active
-                                  ? "bg-[#5a3927] text-white ring-4 ring-[#d9c6b4]"
-                                  : "bg-[#eee4d8] text-gray-500"
-                              }`}
+                                    ? "bg-[#5a3927] text-white ring-4 ring-[#d9c6b4]"
+                                    : "bg-[#eee4d8] text-gray-500"
+                                }`}
                             >
                               {completed
                                 ? "✓"
@@ -855,11 +853,10 @@ export default function ProjectDetailsPage() {
                             </div>
 
                             <h3
-                              className={`mt-4 text-sm font-semibold ${
-                                completed || active
+                              className={`mt-4 text-sm font-semibold ${completed || active
                                   ? "text-[#3d281c]"
                                   : "text-gray-400"
-                              }`}
+                                }`}
                             >
                               {step.title}
                             </h3>
@@ -890,22 +887,20 @@ export default function ProjectDetailsPage() {
                     return (
                       <div
                         key={step.key}
-                        className={`flex items-start gap-4 rounded-xl p-4 border ${
-                          active
+                        className={`flex items-start gap-4 rounded-xl p-4 border ${active
                             ? "border-[#8b5e3c] bg-[#faf7f2]"
                             : completed
-                            ? "border-[#e7dccd] bg-white"
-                            : "border-gray-200 bg-gray-50"
-                        }`}
+                              ? "border-[#e7dccd] bg-white"
+                              : "border-gray-200 bg-gray-50"
+                          }`}
                       >
                         <div
-                          className={`h-11 w-11 shrink-0 rounded-full flex items-center justify-center text-xl ${
-                            completed
+                          className={`h-11 w-11 shrink-0 rounded-full flex items-center justify-center text-xl ${completed
                               ? "bg-[#8b5e3c] text-white"
                               : active
-                              ? "bg-[#5a3927] text-white"
-                              : "bg-[#eee4d8] text-gray-500"
-                          }`}
+                                ? "bg-[#5a3927] text-white"
+                                : "bg-[#eee4d8] text-gray-500"
+                            }`}
                         >
                           {completed
                             ? "✓"
@@ -1101,7 +1096,7 @@ export default function ProjectDetailsPage() {
                   </p>
                 </div>
               </div>
-                  
+
               {quotation.drawing_url && (
                 <div className="rounded-xl border border-[#e7dccd] bg-[#faf7f2] p-5">
                   <div className="flex items-center justify-between gap-3 mb-4">
@@ -1284,11 +1279,10 @@ export default function ProjectDetailsPage() {
 
             {/* Icon */}
             <div
-              className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm border ${
-                confirmModal.variant === "success"
+              className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm border ${confirmModal.variant === "success"
                   ? "bg-green-50 border-green-100 text-green-600"
                   : "bg-red-50 border-red-100 text-red-600"
-              }`}
+                }`}
             >
               {confirmModal.variant === "success" ? (
                 <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -1323,11 +1317,10 @@ export default function ProjectDetailsPage() {
                 type="button"
                 disabled={confirmModal.loading}
                 onClick={handleExecuteConfirm}
-                className={`w-full py-3 px-4 rounded-xl active:scale-[0.98] text-sm font-semibold text-white shadow-lg flex items-center justify-center gap-2 transition disabled:opacity-50 ${
-                  confirmModal.variant === "success"
+                className={`w-full py-3 px-4 rounded-xl active:scale-[0.98] text-sm font-semibold text-white shadow-lg flex items-center justify-center gap-2 transition disabled:opacity-50 ${confirmModal.variant === "success"
                     ? "bg-[#2e7d32] hover:bg-[#1b5e20] shadow-green-900/20"
                     : "bg-red-600 hover:bg-red-700 shadow-red-600/25"
-                }`}
+                  }`}
               >
                 {confirmModal.loading ? (
                   <>
@@ -1382,10 +1375,10 @@ function QuotationStatus({
     status === "Approved"
       ? "bg-green-100 text-green-800"
       : status === "Rejected"
-      ? "bg-red-100 text-red-800"
-      : status === "Expired"
-      ? "bg-gray-100 text-gray-700"
-      : "bg-yellow-100 text-yellow-800";
+        ? "bg-red-100 text-red-800"
+        : status === "Expired"
+          ? "bg-gray-100 text-gray-700"
+          : "bg-yellow-100 text-yellow-800";
 
   return (
     <span

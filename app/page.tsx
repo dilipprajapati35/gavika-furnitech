@@ -40,6 +40,47 @@ export default function Home() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [featuredProducts, setFeaturedProducts] = useState<DbProduct[]>([]);
   const [productsLoading, setProductsLoading] = useState(true);
+  const [activeSection, setActiveSection] = useState<"home" | "about" | "contact">("home");
+
+  useEffect(() => {
+    const handleScrollOrHash = () => {
+      if (
+        window.innerHeight + window.scrollY >=
+        document.documentElement.scrollHeight - 100
+      ) {
+        setActiveSection("contact");
+        return;
+      }
+
+      const contactSection = document.getElementById("contact");
+      const processSection = document.getElementById("process");
+      const scrollPosition = window.scrollY + 250;
+
+      if (contactSection && scrollPosition >= contactSection.offsetTop) {
+        setActiveSection("contact");
+      } else if (processSection && scrollPosition >= processSection.offsetTop) {
+        setActiveSection("about");
+      } else {
+        setActiveSection("home");
+      }
+    };
+
+    if (window.location.hash === "#contact") {
+      setActiveSection("contact");
+    } else if (window.location.hash === "#process") {
+      setActiveSection("about");
+    } else {
+      handleScrollOrHash();
+    }
+
+    window.addEventListener("scroll", handleScrollOrHash, { passive: true });
+    window.addEventListener("hashchange", handleScrollOrHash);
+
+    return () => {
+      window.removeEventListener("scroll", handleScrollOrHash);
+      window.removeEventListener("hashchange", handleScrollOrHash);
+    };
+  }, []);
 
   useEffect(() => {
     // Load real products from database for Featured Designs
@@ -90,7 +131,7 @@ export default function Home() {
 
           <a href="/" className="flex items-center gap-3">
             <img
-              src="/gavika-logo.png"
+              src="/Gavika-new-logo.png"
               alt="Gavika Furnitech"
               className="h-14 w-auto object-contain"
             />
@@ -106,23 +147,50 @@ export default function Home() {
           </a>
 
           <nav className="hidden items-center gap-8 text-sm font-medium md:flex">
-            <a href="/" className="text-[#8b6f47]">
+            <a
+              href="/"
+              onClick={(e) => {
+                setActiveSection("home");
+                if (window.location.pathname === "/") {
+                  e.preventDefault();
+                  window.scrollTo({ top: 0, behavior: "smooth" });
+                }
+              }}
+              className={`transition ${activeSection === "home"
+                  ? "text-[#8b6f47] font-semibold"
+                  : "hover:text-[#8b6f47]"
+                }`}
+            >
               Home
             </a>
 
-            <a href="/furniture" className="hover:text-[#8b6f47]">
+            <a href="/furniture" className="hover:text-[#8b6f47] transition">
               Furniture
             </a>
 
-            <a href="/custom-furniture" className="hover:text-[#8b6f47]">
+            <a href="/custom-furniture" className="hover:text-[#8b6f47] transition">
               Custom Furniture
             </a>
 
-            <a href="/#process" className="hover:text-[#8b6f47]">
+            <a
+              href="/#process"
+              onClick={() => setActiveSection("about")}
+              className={`transition ${activeSection === "about"
+                  ? "text-[#8b6f47] font-semibold"
+                  : "hover:text-[#8b6f47]"
+                }`}
+            >
               About
             </a>
 
-            <a href="/#contact" className="hover:text-[#8b6f47]">
+            <a
+              href="/#contact"
+              onClick={() => setActiveSection("contact")}
+              className={`transition ${activeSection === "contact"
+                  ? "text-[#8b6f47] font-semibold"
+                  : "hover:text-[#8b6f47]"
+                }`}
+            >
               Contact
             </a>
 
@@ -169,8 +237,18 @@ export default function Home() {
 
               <a
                 href="/"
-                onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b6f47]"
+                onClick={(e) => {
+                  setActiveSection("home");
+                  setMobileMenuOpen(false);
+                  if (window.location.pathname === "/") {
+                    e.preventDefault();
+                    window.scrollTo({ top: 0, behavior: "smooth" });
+                  }
+                }}
+                className={`transition ${activeSection === "home"
+                    ? "text-[#8b6f47] font-semibold"
+                    : "hover:text-[#8b6f47]"
+                  }`}
               >
                 Home
               </a>
@@ -178,7 +256,7 @@ export default function Home() {
               <a
                 href="/furniture"
                 onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b6f47]"
+                className="hover:text-[#8b6f47] transition"
               >
                 Furniture
               </a>
@@ -186,23 +264,35 @@ export default function Home() {
               <a
                 href="/custom-furniture"
                 onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b6f47]"
+                className="hover:text-[#8b6f47] transition"
               >
                 Custom Furniture
               </a>
 
               <a
                 href="/#process"
-                onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b6f47]"
+                onClick={() => {
+                  setActiveSection("about");
+                  setMobileMenuOpen(false);
+                }}
+                className={`transition ${activeSection === "about"
+                    ? "text-[#8b6f47] font-semibold"
+                    : "hover:text-[#8b6f47]"
+                  }`}
               >
                 About
               </a>
 
               <a
                 href="/#contact"
-                onClick={() => setMobileMenuOpen(false)}
-                className="hover:text-[#8b6f47]"
+                onClick={() => {
+                  setActiveSection("contact");
+                  setMobileMenuOpen(false);
+                }}
+                className={`transition ${activeSection === "contact"
+                    ? "text-[#8b6f47] font-semibold"
+                    : "hover:text-[#8b6f47]"
+                  }`}
               >
                 Contact
               </a>
@@ -308,7 +398,7 @@ export default function Home() {
           <div className="flex justify-center">
             <div className="flex aspect-square w-full max-w-lg items-center justify-center rounded-[2rem] bg-white p-10 shadow-xl">
               <img
-                src="/gavika-logo.png"
+                src="/Gavika-new-logo.png"
                 alt="Gavika Furnitech Logo"
                 className="max-h-full max-w-full object-contain"
               />
@@ -668,7 +758,7 @@ export default function Home() {
 
             <div>
               <img
-                src="/gavika-logo.png"
+                src="/Gavika-new-logo.png"
                 alt="Gavika Furnitech"
                 className="h-20 w-auto rounded-lg object-contain"
               />

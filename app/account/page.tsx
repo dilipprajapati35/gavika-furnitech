@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import Link from "next/link";
 import { supabase } from "@/utils/supabase/client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 // Gavika Customer Account V2.6 — V2.4 safety architecture + V2.5 order tracking.
 
@@ -47,13 +47,13 @@ interface CustomerOrder {
   amount: number;
 
   status:
-    | "Confirmed"
-    | "Production"
-    | "Quality Check"
-    | "Ready"
-    | "Out for Delivery"
-    | "Delivered"
-    | "Cancelled";
+  | "Confirmed"
+  | "Production"
+  | "Quality Check"
+  | "Ready"
+  | "Out for Delivery"
+  | "Delivered"
+  | "Cancelled";
 
   expected_delivery_date: string | null;
   delivery_address: string | null;
@@ -526,16 +526,16 @@ export default function AccountPage() {
    * ---------------------------------------------------------
    */
 
- const loadOrders = useCallback(
-  async (userId: string, loadGeneration: number) => {
-    if (!mountedRef.current) return;
+  const loadOrders = useCallback(
+    async (userId: string, loadGeneration: number) => {
+      if (!mountedRef.current) return;
 
-    setOrdersLoading(true);
+      setOrdersLoading(true);
 
-    try {
-      const { data, error: ordersError } = await supabase
-        .from("orders")
-        .select(`
+      try {
+        const { data, error: ordersError } = await supabase
+          .from("orders")
+          .select(`
           id,
           order_number,
           user_id,
@@ -557,13 +557,170 @@ export default function AccountPage() {
             reference_image_url
         )
       `)
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false });
 
-      if (ordersError) {
+        if (ordersError) {
+          console.error(
+            "Orders loading error:",
+            getSupabaseErrorMessage(ordersError)
+          );
+
+          if (
+            mountedRef.current &&
+            currentUserIdRef.current === userId &&
+            dataLoadGenerationRef.current === loadGeneration
+          ) {
+            setOrders([]);
+          }
+
+          return;
+        }
+
+        /*
+         * Supabase quotation data is returned as:
+         *
+         * order.quotations.drawing_name
+         * order.quotations.drawing_url
+         *
+         * Convert it into a flat CustomerOrder object
+         * so OrderTrackingCard can directly use:
+         *
+         * order.drawing_name
+         * order.drawing_url
+         */
+
+        const formattedOrders: CustomerOrder[] = await Promise.all(
+          (data || []).map(async (order: any) => {
+            let drawingUrl: string | null = null;
+
+            const drawingPath = order.quotations?.drawing_url;
+
+            let referenceImageUrl: string | null = null;
+
+            const { data: requestData, error: requestError } = await supabase
+              .from("custom_requests")
+              .select(`
+    catalogue_design_name,
+    catalogue_design_image_url,
+    reference_image_url
+  `)
+              .eq("id", order.request_id)
+              .maybeSingle();
+
+            if (requestError) {
+              console.error("Request image data error:", requestError.message);
+            }
+
+            const referenceImagePath = requestData?.reference_image_url ?? null;
+
+            if (referenceImagePath) {
+              const { data: referenceUrlData, error: referenceUrlError } =
+                await supabase.storage
+                  .from("gavika-project-files")
+                  .createSignedUrl(referenceImagePath, 60 * 60);
+
+              if (referenceUrlError) {
+                console.error("Reference image URL error:", referenceUrlError.message);
+              } else {
+                referenceImageUrl = referenceUrlData?.signedUrl ?? null;
+              }
+            }
+
+
+
+
+            if (drawingPath) {
+              let storagePath = drawingPath;
+
+              if (
+                drawingPath.startsWith("http://") ||
+                drawingPath.startsWith("https://")
+              ) {
+                const marker = "/storage/v1/object/";
+                const markerIndex = drawingPath.indexOf(marker);
+
+                if (markerIndex === -1) {
+                  console.error("Invalid drawing Storage URL:", drawingPath);
+                  storagePath = "";
+                } else {
+                  const objectPath = drawingPath
+                    .slice(markerIndex + marker.length)
+                    .split("?")[0];
+
+                  const parts = objectPath.split("/");
+
+                  if (
+                    parts[0] === "public" ||
+                    parts[0] === "sign" ||
+                    parts[0] === "authenticated"
+                  ) {
+                    storagePath = parts.slice(2).join("/");
+                  } else {
+                    storagePath = "";
+                  }
+                }
+              }
+
+              if (storagePath) {
+                const { data: signedUrlData, error: signedUrlError } =
+                  await supabase.storage
+                    .from("gavika-project-files")
+                    .createSignedUrl(storagePath, 60 * 60);
+
+                if (signedUrlError) {
+                  console.error("Drawing URL error:", signedUrlError.message);
+                } else {
+                  drawingUrl = signedUrlData?.signedUrl ?? null;
+                }
+              }
+            }
+
+            return {
+              id: order.id,
+              catalogue_design_name:
+                requestData?.catalogue_design_name ?? null,
+
+              catalogue_design_image_url:
+                requestData?.catalogue_design_image_url ?? null,
+
+              reference_image_url: referenceImageUrl,
+              order_number: order.order_number,
+              user_id: order.user_id,
+              request_id: order.request_id,
+              quotation_id: order.quotation_id,
+              amount: Number(order.amount),
+
+              status: order.status,
+
+              expected_delivery_date:
+                order.expected_delivery_date ?? null,
+
+              delivery_address:
+                order.delivery_address ?? null,
+
+              drawing_name:
+                order.quotations?.drawing_name ?? null,
+
+              drawing_url: drawingUrl,
+
+              created_at: order.created_at,
+              updated_at: order.updated_at,
+            };
+          })
+        );
+
+        if (
+          mountedRef.current &&
+          currentUserIdRef.current === userId &&
+          dataLoadGenerationRef.current === loadGeneration
+        ) {
+          setOrders(formattedOrders);
+        }
+      } catch (err) {
         console.error(
-          "Orders loading error:",
-          getSupabaseErrorMessage(ordersError)
+          "Unexpected orders loading error:",
+          getSupabaseErrorMessage(err)
         );
 
         if (
@@ -573,175 +730,18 @@ export default function AccountPage() {
         ) {
           setOrders([]);
         }
-
-        return;
-      }
-
-      /*
-       * Supabase quotation data is returned as:
-       *
-       * order.quotations.drawing_name
-       * order.quotations.drawing_url
-       *
-       * Convert it into a flat CustomerOrder object
-       * so OrderTrackingCard can directly use:
-       *
-       * order.drawing_name
-       * order.drawing_url
-       */
-
-      const formattedOrders: CustomerOrder[] = await Promise.all(
-  (data || []).map(async (order: any) => {
-    let drawingUrl: string | null = null;
-
-    const drawingPath = order.quotations?.drawing_url;
-
-    let referenceImageUrl: string | null = null;
-
-    const { data: requestData, error: requestError } = await supabase
-      .from("custom_requests")
-      .select(`
-    catalogue_design_name,
-    catalogue_design_image_url,
-    reference_image_url
-  `)
-      .eq("id", order.request_id)
-      .maybeSingle();
-
-    if (requestError) {
-      console.error("Request image data error:", requestError.message);
-    }
-
-    const referenceImagePath = requestData?.reference_image_url ?? null;
-
-    if (referenceImagePath) {
-      const { data: referenceUrlData, error: referenceUrlError } =
-        await supabase.storage
-          .from("gavika-project-files")
-          .createSignedUrl(referenceImagePath, 60 * 60);
-
-      if (referenceUrlError) {
-        console.error("Reference image URL error:", referenceUrlError.message);
-      } else {
-        referenceImageUrl = referenceUrlData?.signedUrl ?? null;
-      }
-    }
-
-
-
-   
-    if (drawingPath) {
-      let storagePath = drawingPath;
-
-      if (
-        drawingPath.startsWith("http://") ||
-        drawingPath.startsWith("https://")
-      ) {
-        const marker = "/storage/v1/object/";
-        const markerIndex = drawingPath.indexOf(marker);
-
-        if (markerIndex === -1) {
-          console.error("Invalid drawing Storage URL:", drawingPath);
-          storagePath = "";
-        } else {
-          const objectPath = drawingPath
-            .slice(markerIndex + marker.length)
-            .split("?")[0];
-
-          const parts = objectPath.split("/");
-
-          if (
-            parts[0] === "public" ||
-            parts[0] === "sign" ||
-            parts[0] === "authenticated"
-          ) {
-            storagePath = parts.slice(2).join("/");
-          } else {
-            storagePath = "";
-          }
+      } finally {
+        if (
+          mountedRef.current &&
+          currentUserIdRef.current === userId &&
+          dataLoadGenerationRef.current === loadGeneration
+        ) {
+          setOrdersLoading(false);
         }
       }
-
-      if (storagePath) {
-        const { data: signedUrlData, error: signedUrlError } =
-          await supabase.storage
-            .from("gavika-project-files")
-            .createSignedUrl(storagePath, 60 * 60);
-
-        if (signedUrlError) {
-          console.error("Drawing URL error:", signedUrlError.message);
-        } else {
-          drawingUrl = signedUrlData?.signedUrl ?? null;
-        }
-      }
-    }
-
-    return {
-      id: order.id,
-      catalogue_design_name:
-        requestData?.catalogue_design_name ?? null,
-
-      catalogue_design_image_url:
-        requestData?.catalogue_design_image_url ?? null,
-
-      reference_image_url: referenceImageUrl,
-      order_number: order.order_number,
-      user_id: order.user_id,
-      request_id: order.request_id,
-      quotation_id: order.quotation_id,
-      amount: Number(order.amount),
-
-      status: order.status,
-
-      expected_delivery_date:
-        order.expected_delivery_date ?? null,
-
-      delivery_address:
-        order.delivery_address ?? null,
-
-      drawing_name:
-        order.quotations?.drawing_name ?? null,
-
-      drawing_url: drawingUrl,
-
-      created_at: order.created_at,
-      updated_at: order.updated_at,
-    };
-  })
-);
-
-      if (
-        mountedRef.current &&
-        currentUserIdRef.current === userId &&
-        dataLoadGenerationRef.current === loadGeneration
-      ) {
-        setOrders(formattedOrders);
-      }
-    } catch (err) {
-      console.error(
-        "Unexpected orders loading error:",
-        getSupabaseErrorMessage(err)
-      );
-
-      if (
-        mountedRef.current &&
-        currentUserIdRef.current === userId &&
-        dataLoadGenerationRef.current === loadGeneration
-      ) {
-        setOrders([]);
-      }
-    } finally {
-      if (
-        mountedRef.current &&
-        currentUserIdRef.current === userId &&
-        dataLoadGenerationRef.current === loadGeneration
-      ) {
-        setOrdersLoading(false);
-      }
-    }
-  },
-  []
-);
+    },
+    []
+  );
 
   /*
    * ---------------------------------------------------------
@@ -1197,7 +1197,7 @@ export default function AccountPage() {
 
         setError(
           rpcError.message ||
-            `Unable to ${decision.toLowerCase()} quotation.`
+          `Unable to ${decision.toLowerCase()} quotation.`
         );
         return;
       }
@@ -1340,7 +1340,7 @@ export default function AccountPage() {
 
         setError(
           orderError.message ||
-            "Unable to create the order. Please try again."
+          "Unable to create the order. Please try again."
         );
         return;
       }
@@ -1486,10 +1486,10 @@ export default function AccountPage() {
     const expiryTime =
       new Date(quotation.created_at).getTime() +
       quotation.validity_days *
-        24 *
-        60 *
-        60 *
-        1000;
+      24 *
+      60 *
+      60 *
+      1000;
 
     return Date.now() >= expiryTime;
   }
@@ -1536,7 +1536,7 @@ export default function AccountPage() {
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
           <Link href="/" className="flex items-center gap-3">
             <img
-              src="/gavika-logo.png"
+              src="/Gavika-new-logo.png"
               alt="Gavika Furnitech"
               className="h-14 w-auto object-contain"
             />
@@ -1849,20 +1849,20 @@ export default function AccountPage() {
 
                 const relatedOrder = quotation
                   ? getOrderForQuotation(
-                      quotation.id
-                    )
+                    quotation.id
+                  )
                   : undefined;
 
                 const quotationExpired =
                   quotation
                     ? isQuotationExpired(
-                        quotation
-                      )
+                      quotation
+                    )
                     : false;
 
                 const quotationDisplayStatus =
                   quotationExpired &&
-                  quotation.status ===
+                    quotation.status ===
                     "Pending"
                     ? "Expired"
                     : quotation?.status;
@@ -1929,15 +1929,13 @@ export default function AccountPage() {
                         label="Dimensions"
                         value={
                           project.length ||
-                          project.width ||
-                          project.height
-                            ? `${project.length || "-"} × ${
-                                project.width ||
-                                "-"
-                              } × ${
-                                project.height ||
-                                "-"
-                              }`
+                            project.width ||
+                            project.height
+                            ? `${project.length || "-"} × ${project.width ||
+                            "-"
+                            } × ${project.height ||
+                            "-"
+                            }`
                             : null
                         }
                       />
@@ -1992,7 +1990,7 @@ export default function AccountPage() {
                             <span
                               className={`rounded-full px-3 py-1 text-xs font-semibold ${getQuotationStatusClasses(
                                 quotationDisplayStatus ||
-                                  quotation.status
+                                quotation.status
                               )}`}
                             >
                               {
@@ -2023,7 +2021,7 @@ export default function AccountPage() {
                                     className="rounded-lg bg-green-700 text-white px-4 py-2 text-sm font-medium hover:bg-green-800 disabled:opacity-50"
                                   >
                                     {actionLoading ===
-                                    `quotation-${quotation.id}`
+                                      `quotation-${quotation.id}`
                                       ? "Processing..."
                                       : "Approve"}
                                   </button>
@@ -2069,7 +2067,7 @@ export default function AccountPage() {
                                   className="rounded-lg bg-[#5a3927] text-white px-5 py-2.5 text-sm font-medium hover:bg-[#432a1e] disabled:opacity-50"
                                 >
                                   {actionLoading ===
-                                  `order-${quotation.id}`
+                                    `order-${quotation.id}`
                                     ? "Creating Order..."
                                     : "Confirm Order"}
                                 </button>
@@ -2110,49 +2108,49 @@ export default function AccountPage() {
                         )}
                         {/* ADMIN DRAWING */}
 
-{quotation.drawing_url && (
-  <div className="mt-5 pt-5 border-t border-[#e7dccd]">
-    <div className="rounded-xl border border-[#e7dccd] bg-[#faf7f2] p-5">
+                        {quotation.drawing_url && (
+                          <div className="mt-5 pt-5 border-t border-[#e7dccd]">
+                            <div className="rounded-xl border border-[#e7dccd] bg-[#faf7f2] p-5">
 
-      <div className="flex items-center justify-between gap-3 mb-4">
-        <div>
-          <p className="text-sm font-semibold text-[#3d281c]">
-            Drawing from Gavika Furnitech
-          </p>
+                              <div className="flex items-center justify-between gap-3 mb-4">
+                                <div>
+                                  <p className="text-sm font-semibold text-[#3d281c]">
+                                    Drawing from Gavika Furnitech
+                                  </p>
 
-          {quotation.drawing_name && (
-            <p className="text-sm text-gray-600 mt-1">
-              {quotation.drawing_name}
-            </p>
-          )}
-        </div>
+                                  {quotation.drawing_name && (
+                                    <p className="text-sm text-gray-600 mt-1">
+                                      {quotation.drawing_name}
+                                    </p>
+                                  )}
+                                </div>
 
-        <span className="text-xs font-medium text-[#7a5235]">
-          Included with quotation
-        </span>
-      </div>
+                                <span className="text-xs font-medium text-[#7a5235]">
+                                  Included with quotation
+                                </span>
+                              </div>
 
-      <img
-        src={quotation.drawing_url}
-        alt={
-          quotation.drawing_name ||
-          "Drawing from Gavika Furnitech"
-        }
-        className="w-full max-h-[600px] object-contain rounded-xl border border-gray-200 bg-white"
-      />
+                              <img
+                                src={quotation.drawing_url}
+                                alt={
+                                  quotation.drawing_name ||
+                                  "Drawing from Gavika Furnitech"
+                                }
+                                className="w-full max-h-[600px] object-contain rounded-xl border border-gray-200 bg-white"
+                              />
 
-      <a
-        href={quotation.drawing_url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex mt-4 rounded-lg bg-[#5a3927] px-4 py-2 text-sm font-medium text-white hover:bg-[#432a1e]"
-      >
-        Open Full Drawing ↗
-      </a>
+                              <a
+                                href={quotation.drawing_url}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex mt-4 rounded-lg bg-[#5a3927] px-4 py-2 text-sm font-medium text-white hover:bg-[#432a1e]"
+                              >
+                                Open Full Drawing ↗
+                              </a>
 
-    </div>
-  </div>
-)}
+                            </div>
+                          </div>
+                        )}
 
                         {/* ORDER STATUS */}
 
@@ -2305,13 +2303,12 @@ export default function AccountPage() {
 
             {/* Icon */}
             <div
-              className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm border ${
-                confirmModal.variant === "success"
+              className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm border ${confirmModal.variant === "success"
                   ? "bg-green-50 border-green-100 text-green-600"
                   : confirmModal.variant === "danger"
-                  ? "bg-red-50 border-red-100 text-red-600"
-                  : "bg-[#f7f2ea] border-[#ded5c8] text-[#3d281c]"
-              }`}
+                    ? "bg-red-50 border-red-100 text-red-600"
+                    : "bg-[#f7f2ea] border-[#ded5c8] text-[#3d281c]"
+                }`}
             >
               {confirmModal.variant === "success" ? (
                 <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2350,13 +2347,12 @@ export default function AccountPage() {
                 type="button"
                 disabled={confirmModal.loading}
                 onClick={handleExecuteConfirm}
-                className={`w-full py-3 px-4 rounded-xl active:scale-[0.98] text-sm font-semibold text-white shadow-lg flex items-center justify-center gap-2 transition disabled:opacity-50 ${
-                  confirmModal.variant === "success"
+                className={`w-full py-3 px-4 rounded-xl active:scale-[0.98] text-sm font-semibold text-white shadow-lg flex items-center justify-center gap-2 transition disabled:opacity-50 ${confirmModal.variant === "success"
                     ? "bg-[#2e7d32] hover:bg-[#1b5e20] shadow-green-900/20"
                     : confirmModal.variant === "danger"
-                    ? "bg-red-600 hover:bg-red-700 shadow-red-600/25"
-                    : "bg-[#3d281c] hover:bg-[#2a1a11] shadow-[#3d281c]/25"
-                }`}
+                      ? "bg-red-600 hover:bg-red-700 shadow-red-600/25"
+                      : "bg-[#3d281c] hover:bg-[#2a1a11] shadow-[#3d281c]/25"
+                  }`}
               >
                 {confirmModal.loading ? (
                   <>
@@ -2494,7 +2490,7 @@ function OrderTrackingCard({
 
       </div>
 
- {/* SELECTED FURNITURE DESIGN */}
+      {/* SELECTED FURNITURE DESIGN */}
 
       {order.catalogue_design_name && (
         <div className="mt-6 rounded-xl border border-[#e7dccd] bg-[#faf7f2] p-4">
@@ -2561,11 +2557,10 @@ function OrderTrackingCard({
                     width:
                       currentIndex <= 0
                         ? "0%"
-                        : `${
-                            (currentIndex /
-                              (ORDER_STEPS.length - 1)) *
-                            100
-                          }%`,
+                        : `${(currentIndex /
+                          (ORDER_STEPS.length - 1)) *
+                        100
+                        }%`,
                   }}
                 />
 
@@ -2588,15 +2583,13 @@ function OrderTrackingCard({
                         >
 
                           <div
-                            className={`w-8 h-8 rounded-full flex items-center justify-center border-2 text-xs font-bold z-10 ${
-                              completed
+                            className={`w-8 h-8 rounded-full flex items-center justify-center border-2 text-xs font-bold z-10 ${completed
                                 ? "bg-[#5a3927] border-[#5a3927] text-white"
                                 : "bg-white border-[#d8cbbb] text-gray-400"
-                            } ${
-                              active
+                              } ${active
                                 ? "ring-4 ring-[#5a3927]/10"
                                 : ""
-                            }`}
+                              }`}
                           >
                             {completed && !active
                               ? "✓"
@@ -2604,11 +2597,10 @@ function OrderTrackingCard({
                           </div>
 
                           <span
-                            className={`text-xs text-center mt-3 ${
-                              completed
+                            className={`text-xs text-center mt-3 ${completed
                                 ? "font-semibold text-[#3d281c]"
                                 : "text-gray-400"
-                            }`}
+                              }`}
                           >
                             {step}
                           </span>
@@ -2684,8 +2676,8 @@ function OrderTrackingCard({
           value={
             order.expected_delivery_date
               ? formatDate(
-                  order.expected_delivery_date
-                )
+                order.expected_delivery_date
+              )
               : "Not updated"
           }
         />

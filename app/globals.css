@@ -1,8 +1,19 @@
+@import url('https://fonts.googleapis.com/css2?family=Great+Vibes&family=Montserrat:wght@500&display=swap');
 @import "tailwindcss";
 
 :root {
   --background: #ffffff;
   --foreground: #171717;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+.brand-name {
+  font-family: 'Great Vibes', cursive;
+  font-size: 3rem;
+  color: #1c2233;
 }
 
 @theme inline {

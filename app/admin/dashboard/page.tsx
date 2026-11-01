@@ -12,6 +12,9 @@ type CustomRequest = {
   email: string | null;
   furniture_type: string;
   room_usage: string | null;
+  length: string | null;
+  width: string | null;
+  height: string | null;
   preferred_material: string | null;
   requirement: string | null;
   delivery_location: string | null;
@@ -381,6 +384,9 @@ export default function AdminDashboard() {
           email,
           furniture_type,
           room_usage,
+          length,
+          width,
+          height,
           preferred_material,
           requirement,
           delivery_location,
@@ -1709,23 +1715,6 @@ export default function AdminDashboard() {
                     </p>
                   </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Or Paste Image URL
-                    </label>
-                    <input
-                      type="url"
-                      value={productForm.image_url}
-                      onChange={(e) =>
-                        setProductForm((prev) => ({ ...prev, image_url: e.target.value }))
-                      }
-                      placeholder="https://images.unsplash.com/..."
-                      className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-2.5 text-sm outline-none focus:border-[#7a5235]"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      Direct public image web link.
-                    </p>
-                  </div>
                 </div>
 
                 <div className="flex justify-end">
@@ -1801,9 +1790,7 @@ export default function AdminDashboard() {
                       </div>
 
                       <div className="p-5 pt-0 border-t border-gray-100 mt-2 flex items-center justify-between">
-                        <span className="text-xs text-gray-400">
-                          ID: {product.id.slice(0, 8)}...
-                        </span>
+
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
@@ -2503,7 +2490,18 @@ export default function AdminDashboard() {
                         </td>
 
                         <td className="px-6 py-4">
-                          {request.furniture_type}
+                          <div className="font-medium text-gray-900">
+                            {request.furniture_type}
+                          </div>
+                          {(request.length || request.width || request.height) && (
+                            <div className="text-xs text-[#7a5235] font-mono mt-0.5">
+                              📐 {[
+                                request.length ? `L:${request.length}` : null,
+                                request.width ? `W:${request.width}` : null,
+                                request.height ? `H:${request.height}` : null,
+                              ].filter(Boolean).join(" × ")}
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-6 py-4">
@@ -2643,7 +2641,23 @@ export default function AdminDashboard() {
 
                   <p className="text-sm text-gray-500">
                     {selectedRequest.furniture_type}
+                    {selectedRequest.room_usage && ` • ${selectedRequest.room_usage}`}
                   </p>
+
+                  {(selectedRequest.length || selectedRequest.width || selectedRequest.height) && (
+                    <div className="mt-2 flex items-center gap-2 text-xs">
+                      <span className="font-semibold text-[#7a5235]">📐 Dimensions:</span>
+                      <span className="rounded bg-white px-2 py-0.5 border border-gray-200 font-mono text-gray-800 font-medium">
+                        {[
+                          selectedRequest.length ? `L: ${selectedRequest.length}` : null,
+                          selectedRequest.width ? `W: ${selectedRequest.width}` : null,
+                          selectedRequest.height ? `H: ${selectedRequest.height}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" × ")}
+                      </span>
+                    </div>
+                  )}
 
                   {selectedRequest.preferred_material && (
                     <p className="text-sm text-gray-500 mt-1">
@@ -2830,12 +2844,35 @@ export default function AdminDashboard() {
 
                   <p className="text-sm text-gray-500">
                     {selectedRequest.furniture_type}
+                    {selectedRequest.room_usage && ` • ${selectedRequest.room_usage}`}
                   </p>
+
+                  {(selectedRequest.length || selectedRequest.width || selectedRequest.height) && (
+                    <div className="mt-2 flex items-center gap-2 text-xs">
+                      <span className="font-semibold text-[#7a5235]">📐 Dimensions:</span>
+                      <span className="rounded bg-white px-2 py-0.5 border border-gray-200 font-mono text-gray-800 font-medium">
+                        {[
+                          selectedRequest.length ? `L: ${selectedRequest.length}` : null,
+                          selectedRequest.width ? `W: ${selectedRequest.width}` : null,
+                          selectedRequest.height ? `H: ${selectedRequest.height}` : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" × ")}
+                      </span>
+                    </div>
+                  )}
 
                   {selectedRequest.preferred_material && (
                     <p className="text-sm text-gray-500 mt-1">
                       Material:{" "}
                       {selectedRequest.preferred_material}
+                    </p>
+                  )}
+
+                  {selectedRequest.requirement && (
+                    <p className="text-xs text-gray-600 mt-2 bg-white/70 p-2 rounded border border-gray-200">
+                      <span className="font-semibold text-gray-700">Requirement: </span>
+                      {selectedRequest.requirement}
                     </p>
                   )}
 
@@ -3175,7 +3212,7 @@ export default function AdminDashboard() {
       {selectedOrderDetails && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs px-4 py-6 overflow-y-auto">
           <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-[#ded5c8] overflow-hidden my-auto max-h-[92vh] flex flex-col">
-            
+
             {/* Modal Header */}
             <div className="border-b border-[#ded5c8] bg-[#fbf9f6] px-6 py-5 flex items-start justify-between gap-4 shrink-0">
               <div>

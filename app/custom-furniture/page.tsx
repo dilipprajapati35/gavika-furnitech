@@ -1,11 +1,10 @@
 "use client";
 export const dynamic = "force-dynamic";
-import { useSearchParams } from "next/navigation";
-
-import { FormEvent, Suspense, useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase } from "@/utils/supabase/client";
+import { locationData } from "@/data/locations";
 import { products } from "@/data/products";
+import { supabase } from "@/utils/supabase/client";
+import { useRouter, useSearchParams } from "next/navigation";
+import { FormEvent, Suspense, useEffect, useState } from "react";
 
 function generateRequestId() {
   const year = new Date().getFullYear();
@@ -76,6 +75,36 @@ function CustomFurnitureContent() {
   const [successRequestId, setSuccessRequestId] = useState("");
   const [error, setError] = useState("");
 
+  // Delivery Address Dropdowns
+  const [selectedCountry, setSelectedCountry] = useState("India");
+  const [selectedState, setSelectedState] = useState("");
+  const [selectedCity, setSelectedCity] = useState("");
+  const [customCity, setCustomCity] = useState("");
+  const [streetAddress, setStreetAddress] = useState("");
+  const [pincode, setPincode] = useState("");
+
+  const countries = Object.keys(locationData);
+  const availableStates =
+    selectedCountry && locationData[selectedCountry]
+      ? Object.keys(locationData[selectedCountry])
+      : [];
+  const availableCities =
+    selectedCountry && selectedState && locationData[selectedCountry]?.[selectedState]
+      ? locationData[selectedCountry][selectedState]
+      : [];
+
+  const effectiveCity =
+    selectedCity === "Other" ? customCity.trim() : selectedCity.trim();
+  const computedDeliveryLocation = [
+    streetAddress.trim(),
+    effectiveCity,
+    selectedState.trim(),
+    pincode.trim() ? `PIN: ${pincode.trim()}` : "",
+    selectedCountry.trim(),
+  ]
+    .filter(Boolean)
+    .join(", ");
+
   useEffect(() => {
     checkUser();
     loadOptions();
@@ -143,6 +172,11 @@ function CustomFurnitureContent() {
       return;
     }
 
+    if (!selectedCountry || !selectedState || !effectiveCity) {
+      setError("Please select Country, State, and City for delivery location.");
+      return;
+    }
+
     setSubmitting(true);
 
     try {
@@ -151,8 +185,8 @@ function CustomFurnitureContent() {
 
       const requestId = generateRequestId();
       const {
-         data: { user: currentUser },
-         error: currentUserError,
+        data: { user: currentUser },
+        error: currentUserError,
       } = await supabase.auth.getUser();
 
       console.log("CURRENT USER:", currentUser?.id);
@@ -161,13 +195,13 @@ function CustomFurnitureContent() {
       if (currentUserError || !currentUser) {
         setError("Your login session has expired. Please login again.");
         setSubmitting(false);
-       return;
+        return;
       }
 
       if (currentUser.id !== userId) {
         setError("User session mismatch. Please logout and login again.");
         setSubmitting(false);
-       return;
+        return;
       }
 
       const referenceFile = formData.get("reference_image");
@@ -208,8 +242,7 @@ function CustomFurnitureContent() {
           console.error("Reference image upload error:", uploadError);
 
           setError(
-            `Reference image upload nahi ho paayi: ${
-              uploadError.message || "Storage error"
+            `Reference image upload nahi ho paayi: ${uploadError.message || "Storage error"
             }`
           );
 
@@ -254,8 +287,7 @@ function CustomFurnitureContent() {
         console.error("Request insert error:", insertError);
 
         setError(
-          `Request submit nahi ho paayi: ${
-            insertError.message || "Database error"
+          `Request submit nahi ho paayi: ${insertError.message || "Database error"
           }`
         );
 
@@ -265,6 +297,13 @@ function CustomFurnitureContent() {
       setSuccessRequestId(requestId);
 
       form.reset();
+
+      setSelectedCountry("India");
+      setSelectedState("");
+      setSelectedCity("");
+      setCustomCity("");
+      setStreetAddress("");
+      setPincode("");
 
       const emailInput = form.elements.namedItem("email");
 
@@ -296,14 +335,14 @@ function CustomFurnitureContent() {
   }
 
   return (
-    
+
     <main className="min-h-screen bg-[#f5efe6]">
       {/* NAVBAR */}
       <header className="sticky top-0 z-50 border-b border-[#ded5c8] bg-[#f8f5ef]/95 backdrop-blur">
         <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
           <a href="/" className="flex items-center gap-3">
             <img
-              src="/gavika-logo.png"
+              src="/Gavika-new-logo.png"
               alt="Gavika Furnitech"
               className="h-14 w-auto object-contain"
             />
@@ -626,8 +665,8 @@ function CustomFurnitureContent() {
                     {optionsLoading
                       ? "Loading furniture types..."
                       : furnitureTypes.length === 0
-                      ? "No furniture types configured"
-                      : "Select furniture type"}
+                        ? "No furniture types configured"
+                        : "Select furniture type"}
                   </option>
                   {furnitureTypes.map((type) => (
                     <option key={type} value={type}>
@@ -719,8 +758,8 @@ function CustomFurnitureContent() {
                 {optionsLoading
                   ? "Loading material preferences..."
                   : materialPreferences.length === 0
-                  ? "No material preferences configured"
-                  : "Select preferred material"}
+                    ? "No material preferences configured"
+                    : "Select preferred material"}
               </option>
               {materialPreferences.map((mat) => (
                 <option key={mat} value={mat}>
@@ -761,18 +800,154 @@ function CustomFurnitureContent() {
             </p>
           </div>
 
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Delivery Location *
-            </label>
+          {/* Delivery Location Dropdowns */}
+          <div className="space-y-4 rounded-xl border border-gray-200 bg-[#faf8f5] p-5">
+            <div className="flex items-center justify-between">
+              <label className="block text-sm font-semibold text-gray-800">
+                Delivery Location *
+              </label>
+              <span className="text-xs text-gray-500">
+                Select Country, State & City
+              </span>
+            </div>
 
-            <textarea
+            <div className="grid gap-4 sm:grid-cols-3">
+              {/* Country Dropdown */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Country *
+                </label>
+                <select
+                  value={selectedCountry}
+                  onChange={(e) => {
+                    setSelectedCountry(e.target.value);
+                    setSelectedState("");
+                    setSelectedCity("");
+                    setCustomCity("");
+                  }}
+                  required
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235] cursor-pointer"
+                >
+                  <option value="">Select Country</option>
+                  {countries.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* State Dropdown */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  State / Province *
+                </label>
+                <select
+                  value={selectedState}
+                  onChange={(e) => {
+                    setSelectedState(e.target.value);
+                    setSelectedCity("");
+                    setCustomCity("");
+                  }}
+                  disabled={!selectedCountry}
+                  required
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235] disabled:bg-gray-100 disabled:text-gray-400 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <option value="">Select State</option>
+                  {availableStates.map((s) => (
+                    <option key={s} value={s}>
+                      {s}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* City Dropdown */}
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  City *
+                </label>
+                <select
+                  value={selectedCity}
+                  onChange={(e) => {
+                    setSelectedCity(e.target.value);
+                    if (e.target.value !== "Other") setCustomCity("");
+                  }}
+                  disabled={!selectedState}
+                  required
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235] disabled:bg-gray-100 disabled:text-gray-400 cursor-pointer disabled:cursor-not-allowed"
+                >
+                  <option value="">Select City</option>
+                  {availableCities.map((city) => (
+                    <option key={city} value={city}>
+                      {city}
+                    </option>
+                  ))}
+                  <option value="Other">Other City</option>
+                </select>
+              </div>
+            </div>
+
+            {selectedCity === "Other" && (
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Specify City Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={customCity}
+                  onChange={(e) => setCustomCity(e.target.value)}
+                  placeholder="Enter your city name"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                />
+              </div>
+            )}
+
+            {/* Street Address & Pincode */}
+            <div className="grid gap-4 sm:grid-cols-3">
+              <div className="sm:col-span-2">
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  Street Address / Flat / Landmark (Optional)
+                </label>
+                <input
+                  type="text"
+                  value={streetAddress}
+                  onChange={(e) => setStreetAddress(e.target.value)}
+                  placeholder="e.g. 402 Lakeview Apartments, Near Chetak Circle"
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-600 mb-1.5">
+                  PIN Code / Postal Code
+                </label>
+                <input
+                  type="text"
+                  name="pincode"
+                  value={pincode}
+                  onChange={(e) => setPincode(e.target.value)}
+                  placeholder="e.g. 313001"
+                  maxLength={10}
+                  className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                />
+              </div>
+            </div>
+
+            {/* Hidden field for formData submission */}
+            <input
+              type="hidden"
               name="delivery_location"
-              rows={3}
-              required
-              placeholder="Enter your delivery location"
-              className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none resize-y focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+              value={computedDeliveryLocation}
             />
+
+            {computedDeliveryLocation && (
+              <p className="text-xs text-gray-600">
+                <span className="font-semibold text-[#7a5235]">Selected Location:</span>{" "}
+                {computedDeliveryLocation}
+              </p>
+            )}
           </div>
 
           <div className="pt-2">
