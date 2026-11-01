@@ -3,10 +3,15 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { supabase } from "@/utils/supabase/client";
+import {
+  extractProductImages,
+  deleteProductImagesFromStorage,
+} from "@/utils/product-images";
 
 type CustomRequest = {
   id: string;
   request_id: string;
+  user_id?: string | null;
   full_name: string;
   mobile: string;
   email: string | null;
@@ -25,6 +30,18 @@ type CustomRequest = {
   catalogue_design_id: string | null;
   catalogue_design_name: string | null;
   catalogue_design_image_url: string | null;
+};
+
+type ManagedUser = {
+  id: string;
+  email: string;
+  full_name: string;
+  mobile: string;
+  is_admin: boolean;
+  created_at: string;
+  last_sign_in_at?: string | null;
+  total_requests: number;
+  total_orders: number;
 };
 
 type Quotation = {
@@ -66,6 +83,7 @@ type CatalogueProduct = {
   description: string | null;
   price: string;
   image_url: string;
+  images?: string[] | null;
   created_at?: string;
 };
 
@@ -182,10 +200,268 @@ function formatOrderDate(dateString: string | null | undefined) {
   });
 }
 
+function AdminProductCard({
+  product,
+  onView,
+  onEdit,
+  onDelete,
+}: {
+  product: CatalogueProduct;
+  onView: (index: number) => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const allImages = extractProductImages(product);
+  const [activeImageIndex, setActiveImageIndex] = useState(0);
+  const [imageError, setImageError] = useState(false);
+
+  const displayImages =
+    allImages.length > 0
+      ? allImages
+      : ([product.image_url].filter(Boolean) as string[]);
+
+  const currentImageUrl =
+    displayImages[activeImageIndex] ||
+    (product.image_url && typeof product.image_url === "string" ? product.image_url : null);
+
+  useEffect(() => {
+    setImageError(false);
+  }, [activeImageIndex, currentImageUrl]);
+
+  const formatPrice = (raw: string | null | undefined) => {
+    if (!raw) return { text: "Price on request", isBadge: true };
+    const trimmed = raw.trim();
+    if (!trimmed) return { text: "Price on request", isBadge: true };
+    if (trimmed.toLowerCase().includes("coming soon")) {
+      return { text: "Coming Soon", isBadge: true };
+    }
+    if (trimmed.startsWith("₹")) {
+      return { text: trimmed, isBadge: false };
+    }
+    const cleanNum = trimmed.replace(/[^\d.]/g, "");
+    if (cleanNum && !isNaN(Number(cleanNum))) {
+      return {
+        text: `₹${Number(cleanNum).toLocaleString("en-IN")}`,
+        isBadge: false,
+      };
+    }
+    return { text: trimmed, isBadge: true };
+  };
+
+  const priceData = formatPrice(product.price);
+
+  return (
+    <div className="group rounded-2xl bg-white border border-[#e7dccd] hover:border-[#b8956e] overflow-hidden shadow-xs hover:shadow-lg transition-all duration-300 flex flex-col justify-between">
+      <div>
+        {/* Image Display with Click to View Modal */}
+        <div
+          onClick={() => onView(activeImageIndex)}
+          className="relative aspect-[4/3] bg-[#f5efe6] overflow-hidden select-none cursor-pointer group/img"
+          title="Click to view full photo and details"
+        >
+          {currentImageUrl && !imageError ? (
+            <img
+              src={currentImageUrl}
+              alt={product.name}
+              className="w-full h-full object-cover group-hover/img:scale-105 transition-transform duration-500 ease-out"
+              onError={() => setImageError(true)}
+            />
+          ) : (
+            <div className="w-full h-full flex flex-col items-center justify-center bg-[#f4efe8] text-stone-400 p-4 select-none">
+              <div className="w-14 h-14 rounded-2xl bg-white/90 border border-[#e7dccd] flex items-center justify-center text-2xl shadow-2xs mb-2">
+                📷
+              </div>
+              <span className="text-xs font-semibold text-[#7a5235]">No Image Available</span>
+              <span className="text-[10px] text-stone-400 mt-0.5">Click to view details or edit</span>
+            </div>
+          )}
+
+          {/* Category Badge */}
+          <span className="absolute top-3 left-3 rounded-full bg-white/95 backdrop-blur-md px-3 py-1 text-xs font-semibold text-[#3d281c] shadow-xs border border-stone-200/50 pointer-events-none">
+            {product.category}
+          </span>
+
+          {/* Photo Count Pill */}
+          {displayImages.length > 1 && (
+            <span className="absolute top-3 right-3 rounded-full bg-black/75 backdrop-blur-md text-white px-2.5 py-1 text-[11px] font-medium flex items-center gap-1.5 shadow-md pointer-events-none">
+              <span>📷</span>
+              <span>{displayImages.length} photos</span>
+            </span>
+          )}
+
+          {/* Hover to view overlay */}
+          <div className="absolute inset-0 flex items-center justify-center bg-black/25 opacity-0 group-hover/img:opacity-100 transition-opacity duration-200 pointer-events-none">
+            <span className="rounded-full bg-white/95 backdrop-blur-xs px-3.5 py-1.5 text-xs font-semibold text-[#3d281c] shadow-md flex items-center gap-1.5">
+              🔍 Click to view {displayImages.length > 1 ? `all ${displayImages.length} photos` : "details"}
+            </span>
+          </div>
+
+          {/* Interactive Prev/Next for Multiple Images */}
+          {displayImages.length > 1 && (
+            <div className="absolute bottom-2.5 inset-x-2 flex items-center justify-between pointer-events-none z-10">
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveImageIndex((prev) =>
+                    prev === 0 ? displayImages.length - 1 : prev - 1
+                  );
+                }}
+                className="pointer-events-auto h-7 w-7 rounded-full bg-black/60 hover:bg-black/85 text-white flex items-center justify-center transition backdrop-blur-xs text-sm active:scale-95 shadow"
+                title="Previous photo"
+                aria-label="Previous photo"
+              >
+                ‹
+              </button>
+
+              <div className="flex items-center gap-1 bg-black/50 backdrop-blur-xs px-2 py-1 rounded-full">
+                {displayImages.map((_, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setActiveImageIndex(idx);
+                    }}
+                    className={`pointer-events-auto transition-all ${
+                      idx === activeImageIndex
+                        ? "w-4 h-1.5 rounded-full bg-white"
+                        : "w-1.5 h-1.5 rounded-full bg-white/50 hover:bg-white/80"
+                    }`}
+                    aria-label={`Go to photo ${idx + 1}`}
+                  />
+                ))}
+              </div>
+
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setActiveImageIndex((prev) =>
+                    prev === displayImages.length - 1 ? 0 : prev + 1
+                  );
+                }}
+                className="pointer-events-auto h-7 w-7 rounded-full bg-black/60 hover:bg-black/85 text-white flex items-center justify-center transition backdrop-blur-xs text-sm active:scale-95 shadow"
+                title="Next photo"
+                aria-label="Next photo"
+              >
+                ›
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Content Details */}
+        <div className="p-5">
+          {/* Price & Status Row */}
+          <div className="flex items-center justify-between gap-2 mb-2">
+            {priceData.isBadge ? (
+              <span className="inline-flex items-center text-xs font-semibold px-2.5 py-1 rounded-full bg-amber-50 text-amber-800 border border-amber-200/60">
+                ✨ {priceData.text}
+              </span>
+            ) : (
+              <span className="text-xl font-serif font-bold text-[#3d281c] tracking-tight">
+                {priceData.text}
+              </span>
+            )}
+
+            <span className="text-[11px] font-mono text-gray-400 bg-gray-50 px-2 py-0.5 rounded border border-gray-100">
+              #{product.id.slice(0, 6)}
+            </span>
+          </div>
+
+          {/* Product Name */}
+          <h4
+            onClick={() => onView(activeImageIndex)}
+            className="font-serif font-semibold text-[#3d281c] text-base leading-snug line-clamp-2 min-h-[2.75rem] group-hover:text-[#7a5235] hover:underline cursor-pointer transition"
+            title={`Click to view details for ${product.name}`}
+          >
+            {product.name}
+          </h4>
+
+          {/* Description */}
+          <p className="text-xs sm:text-sm text-gray-500 mt-1.5 line-clamp-2 min-h-[2.5rem] leading-relaxed">
+            {product.description || "No description provided."}
+          </p>
+        </div>
+      </div>
+
+      {/* Action Footer */}
+      <div className="px-5 py-3.5 bg-[#faf7f2]/70 border-t border-[#f0e6d8] flex items-center gap-2 mt-auto">
+        <button
+          type="button"
+          onClick={() => onView(activeImageIndex)}
+          className="inline-flex items-center justify-center gap-1 py-2 px-3 rounded-xl text-xs font-semibold text-[#3d281c] bg-white hover:bg-[#f5efe6] border border-[#d8c7b3] transition duration-150 active:scale-98 shadow-2xs"
+          title="View product details and gallery"
+        >
+          <span>🔍</span>
+          <span>View</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onEdit}
+          className="flex-1 inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-semibold text-[#5a3927] bg-white hover:bg-[#f5efe6] border border-[#d8c7b3] transition duration-150 active:scale-98 shadow-2xs"
+        >
+          <svg
+            className="w-3.5 h-3.5 text-[#7a5235]"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z"
+            />
+          </svg>
+          <span>Edit</span>
+        </button>
+
+        <button
+          type="button"
+          onClick={onDelete}
+          className="inline-flex items-center justify-center gap-1.5 py-2 px-3 rounded-xl text-xs font-medium text-red-700 bg-red-50/70 hover:bg-red-100 border border-red-200 transition duration-150 active:scale-98 shadow-2xs"
+          title="Delete product from catalogue"
+        >
+          <svg
+            className="w-3.5 h-3.5 text-red-600"
+            fill="none"
+            stroke="currentColor"
+            viewBox="0 0 24 24"
+          >
+            <path
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              strokeWidth={2}
+              d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+            />
+          </svg>
+          <span>Delete</span>
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export default function AdminDashboard() {
   const router = useRouter();
 
-  const [activeTab, setActiveTab] = useState<"requests" | "orders" | "options" | "products">("requests");
+  const [activeTab, setActiveTab] = useState<
+    "requests" | "orders" | "options" | "products" | "users"
+  >("requests");
+
+  const [usersList, setUsersList] = useState<ManagedUser[]>([]);
+  const [usersLoading, setUsersLoading] = useState(false);
+  const [userSearchQuery, setUserSearchQuery] = useState("");
+  const [userRoleFilter, setUserRoleFilter] = useState<"All" | "Admin" | "Customer">("All");
+  const [selectedUserDetails, setSelectedUserDetails] = useState<ManagedUser | null>(null);
+  const [showAddAdminModal, setShowAddAdminModal] = useState(false);
+  const [addAdminEmail, setAddAdminEmail] = useState("");
+  const [addAdminLoading, setAddAdminLoading] = useState(false);
+  const [currentUserId, setCurrentUserId] = useState<string>("");
+  const [currentUserEmail, setCurrentUserEmail] = useState<string>("");
 
   const [ordersList, setOrdersList] = useState<AdminOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
@@ -197,6 +473,45 @@ export default function AdminDashboard() {
 
   const [productsList, setProductsList] = useState<CatalogueProduct[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
+  const [previewProduct, setPreviewProduct] = useState<{
+    product: CatalogueProduct;
+    activeIndex: number;
+  } | null>(null);
+
+  useEffect(() => {
+    if (!previewProduct) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setPreviewProduct(null);
+      } else if (e.key === "ArrowLeft") {
+        const imgs = extractProductImages(previewProduct.product);
+        if (imgs.length > 1) {
+          setPreviewProduct((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  activeIndex: (prev.activeIndex - 1 + imgs.length) % imgs.length,
+                }
+              : null
+          );
+        }
+      } else if (e.key === "ArrowRight") {
+        const imgs = extractProductImages(previewProduct.product);
+        if (imgs.length > 1) {
+          setPreviewProduct((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  activeIndex: (prev.activeIndex + 1) % imgs.length,
+                }
+              : null
+          );
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [previewProduct]);
   const [authVerified, setAuthVerified] = useState(false);
   const [toast, setToast] = useState<MessageState | null>(null);
   const toastTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -230,8 +545,9 @@ export default function AdminDashboard() {
     category: "",
     description: "",
     price: "",
-    image_url: "",
-    image_file: null as File | null,
+    existing_images: [] as string[],
+    new_image_files: [] as File[],
+    new_image_previews: [] as string[],
   });
 
   const [productForm, setProductForm] = useState({
@@ -239,9 +555,98 @@ export default function AdminDashboard() {
     category: "",
     description: "",
     price: "Custom Quote",
-    image_url: "",
-    image_file: null as File | null,
+    image_files: [] as File[],
+    image_previews: [] as string[],
   });
+
+  const handleSelectProductImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    setProductForm((prev) => {
+      const remainingSlots = 5 - prev.image_files.length;
+      if (remainingSlots <= 0) {
+        showToast({
+          type: "error",
+          text: "Maximum 5 images allowed per product design.",
+        });
+        return prev;
+      }
+
+      if (files.length > remainingSlots) {
+        showToast({
+          type: "error",
+          text: `Only ${remainingSlots} more image${remainingSlots === 1 ? "" : "s"} can be added (max 5).`,
+        });
+      }
+
+      const filesToAdd = files.slice(0, remainingSlots);
+      const newFiles = [...prev.image_files, ...filesToAdd];
+      const newPreviews = [...prev.image_previews, ...filesToAdd.map((f) => URL.createObjectURL(f))];
+
+      return {
+        ...prev,
+        image_files: newFiles,
+        image_previews: newPreviews,
+      };
+    });
+    e.target.value = "";
+  };
+
+  const handleRemoveProductImage = (idx: number) => {
+    setProductForm((prev) => ({
+      ...prev,
+      image_files: prev.image_files.filter((_, i) => i !== idx),
+      image_previews: prev.image_previews.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleSelectEditImages = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files || []);
+    if (!files.length) return;
+
+    setEditForm((prev) => {
+      const currentCount = prev.existing_images.length + prev.new_image_files.length;
+      const remainingSlots = 5 - currentCount;
+      if (remainingSlots <= 0) {
+        showToast({
+          type: "error",
+          text: "Maximum 5 images allowed per product.",
+        });
+        return prev;
+      }
+
+      if (files.length > remainingSlots) {
+        showToast({
+          type: "error",
+          text: `Only ${remainingSlots} more image${remainingSlots === 1 ? "" : "s"} can be added (max 5).`,
+        });
+      }
+
+      const filesToAdd = files.slice(0, remainingSlots);
+      return {
+        ...prev,
+        new_image_files: [...prev.new_image_files, ...filesToAdd],
+        new_image_previews: [...prev.new_image_previews, ...filesToAdd.map((f) => URL.createObjectURL(f))],
+      };
+    });
+    e.target.value = "";
+  };
+
+  const handleRemoveExistingEditImage = (idx: number) => {
+    setEditForm((prev) => ({
+      ...prev,
+      existing_images: prev.existing_images.filter((_, i) => i !== idx),
+    }));
+  };
+
+  const handleRemoveNewEditImage = (idx: number) => {
+    setEditForm((prev) => ({
+      ...prev,
+      new_image_files: prev.new_image_files.filter((_, i) => i !== idx),
+      new_image_previews: prev.new_image_previews.filter((_, i) => i !== idx),
+    }));
+  };
 
   const [requests, setRequests] = useState<CustomRequest[]>([]);
   const [quotations, setQuotations] = useState<Record<string, Quotation>>(
@@ -262,6 +667,10 @@ export default function AdminDashboard() {
     title: string;
     message: string;
     itemName: string;
+    confirmText?: string;
+    loadingText?: string;
+    variant?: "danger" | "primary" | "warning";
+    icon?: string;
     onConfirm: () => Promise<void> | void;
     loading?: boolean;
   } | null>(null);
@@ -372,6 +781,8 @@ export default function AdminDashboard() {
       }
 
       setAuthVerified(true);
+      setCurrentUserId(session.user.id);
+      setCurrentUserEmail(session.user.email || "");
 
       const [requestsResult, quotationsResult] = await Promise.all([
         supabase
@@ -379,6 +790,7 @@ export default function AdminDashboard() {
           .select(`
           id,
           request_id,
+          user_id,
           full_name,
           mobile,
           email,
@@ -681,12 +1093,344 @@ export default function AdminDashboard() {
     }
   }
 
+  const loadUsers = useCallback(async () => {
+    setUsersLoading(true);
+    try {
+      // 1. Attempt to fetch via RPC function get_admin_users_list
+      const { data: rpcData, error: rpcErr } = await supabase.rpc("get_admin_users_list");
+
+      if (!rpcErr && Array.isArray(rpcData)) {
+        setUsersList(
+          rpcData.map((u: any) => ({
+            id: u.id,
+            email: u.email || "",
+            full_name: u.full_name || u.email?.split("@")[0] || "Customer",
+            mobile: u.mobile || "-",
+            is_admin: Boolean(u.is_admin),
+            created_at: u.created_at || new Date().toISOString(),
+            last_sign_in_at: u.last_sign_in_at || null,
+            total_requests: Number(u.total_requests || 0),
+            total_orders: Number(u.total_orders || 0),
+          }))
+        );
+        return;
+      }
+
+      // 2. Resilient Fallback: Aggregate from admin_users, custom_requests, and orders tables
+      const [
+        { data: adminRows },
+        { data: reqRows },
+        { data: ordRows },
+        { data: sessionData },
+      ] = await Promise.all([
+        supabase.from("admin_users").select("id, user_id, created_at"),
+        supabase
+          .from("custom_requests")
+          .select("id, user_id, full_name, mobile, email, created_at"),
+        supabase.from("orders").select("id, user_id, created_at"),
+        supabase.auth.getSession(),
+      ]);
+
+      const adminUserIds = new Set((adminRows || []).map((r: any) => r.user_id));
+      const userMap = new Map<string, ManagedUser>();
+
+      const activeSessionUser = sessionData?.session?.user;
+      if (activeSessionUser?.id) {
+        userMap.set(activeSessionUser.id, {
+          id: activeSessionUser.id,
+          email: activeSessionUser.email || "",
+          full_name:
+            (activeSessionUser.user_metadata as any)?.full_name ||
+            activeSessionUser.email?.split("@")[0] ||
+            "Administrator",
+          mobile:
+            (activeSessionUser.user_metadata as any)?.mobile ||
+            activeSessionUser.phone ||
+            "-",
+          is_admin: true,
+          created_at: activeSessionUser.created_at || new Date().toISOString(),
+          last_sign_in_at: activeSessionUser.last_sign_in_at || null,
+          total_requests: 0,
+          total_orders: 0,
+        });
+      }
+
+      for (const admin of adminRows || []) {
+        if (!userMap.has(admin.user_id)) {
+          userMap.set(admin.user_id, {
+            id: admin.user_id,
+            email: `admin-${admin.user_id.slice(0, 8)}@gavika.com`,
+            full_name: "Gavika Admin",
+            mobile: "-",
+            is_admin: true,
+            created_at: admin.created_at || new Date().toISOString(),
+            last_sign_in_at: null,
+            total_requests: 0,
+            total_orders: 0,
+          });
+        }
+      }
+
+      for (const req of reqRows || []) {
+        const uid = req.user_id || req.email || req.id;
+        const existing = userMap.get(uid);
+        if (existing) {
+          existing.total_requests += 1;
+          if ((!existing.email || existing.email.startsWith("admin-")) && req.email) {
+            existing.email = req.email;
+          }
+          if (existing.full_name === "Customer" || !existing.full_name) {
+            if (req.full_name) existing.full_name = req.full_name;
+          }
+          if (existing.mobile === "-" && req.mobile) existing.mobile = req.mobile;
+        } else {
+          userMap.set(uid, {
+            id: req.user_id || uid,
+            email: req.email || "-",
+            full_name: req.full_name || "Customer",
+            mobile: req.mobile || "-",
+            is_admin: req.user_id ? adminUserIds.has(req.user_id) : false,
+            created_at: req.created_at,
+            last_sign_in_at: null,
+            total_requests: 1,
+            total_orders: 0,
+          });
+        }
+      }
+
+      for (const ord of ordRows || []) {
+        if (!ord.user_id) continue;
+        const existing = userMap.get(ord.user_id);
+        if (existing) {
+          existing.total_orders += 1;
+        } else {
+          userMap.set(ord.user_id, {
+            id: ord.user_id,
+            email: "-",
+            full_name: "Customer",
+            mobile: "-",
+            is_admin: adminUserIds.has(ord.user_id),
+            created_at: ord.created_at,
+            last_sign_in_at: null,
+            total_requests: 0,
+            total_orders: 1,
+          });
+        }
+      }
+
+      setUsersList(Array.from(userMap.values()));
+    } catch (err: any) {
+      console.error("loadUsers error:", err);
+      showToast({
+        type: "error",
+        text: `Unable to load users: ${err?.message || "Check network"}`,
+      });
+    } finally {
+      setUsersLoading(false);
+    }
+  }, [showToast]);
+
+  const handleToggleAdminRole = (targetUser: ManagedUser) => {
+    const willBeAdmin = !targetUser.is_admin;
+
+    if (!willBeAdmin && targetUser.id === currentUserId) {
+      const adminCount = usersList.filter((u) => u.is_admin).length;
+      if (adminCount <= 1) {
+        showToast({
+          type: "error",
+          text: "Cannot revoke your own administrator role when you are the only remaining administrator.",
+        });
+        return;
+      }
+    }
+
+    setDeleteConfirm({
+      isOpen: true,
+      title: willBeAdmin ? "Grant Administrator Privileges" : "Revoke Administrator Role",
+      itemName: targetUser.full_name || targetUser.email,
+      confirmText: willBeAdmin ? "Grant Admin Access" : "Revoke Access",
+      loadingText: willBeAdmin ? "Promoting..." : "Revoking...",
+      variant: willBeAdmin ? "primary" : "warning",
+      icon: willBeAdmin ? "👑" : "⚠️",
+      message: willBeAdmin
+        ? `Are you sure you want to promote "${targetUser.full_name || targetUser.email}" to Administrator? They will be granted full access to orders, quotation generation, catalog management, and admin privileges.`
+        : `Are you sure you want to demote "${targetUser.full_name || targetUser.email}" back to standard Customer? They will immediately lose access to the Admin Panel.`,
+      onConfirm: async () => {
+        try {
+          const { error: rpcErr } = await supabase.rpc("set_user_admin_role", {
+            p_user_id: targetUser.id,
+            p_make_admin: willBeAdmin,
+          });
+
+          if (rpcErr) {
+            // Direct table fallback
+            if (willBeAdmin) {
+              const { error: insErr } = await supabase
+                .from("admin_users")
+                .insert({ user_id: targetUser.id });
+              if (insErr) throw insErr;
+            } else {
+              const { error: delErr } = await supabase
+                .from("admin_users")
+                .delete()
+                .eq("user_id", targetUser.id);
+              if (delErr) throw delErr;
+            }
+          }
+
+          showToast({
+            type: "success",
+            text: willBeAdmin
+              ? `Successfully granted Administrator privileges to ${targetUser.full_name || targetUser.email}!`
+              : `Successfully revoked Administrator role from ${targetUser.full_name || targetUser.email}.`,
+          });
+          loadUsers();
+        } catch (err: any) {
+          showToast({
+            type: "error",
+            text: `Failed to update user role: ${err?.message || "Unknown error"}`,
+          });
+        }
+      },
+    });
+  };
+
+  const handleAddAdminByEmail = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEmail = addAdminEmail.trim().toLowerCase();
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      showToast({
+        type: "error",
+        text: "Please enter a valid email address.",
+      });
+      return;
+    }
+
+    setAddAdminLoading(true);
+    try {
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc(
+        "add_admin_by_email",
+        { p_email: cleanEmail }
+      );
+
+      if (rpcErr) {
+        // Fallback: search locally in usersList
+        const matched = usersList.find(
+          (u) => u.email.toLowerCase() === cleanEmail
+        );
+        if (matched && matched.id) {
+          const { error: insErr } = await supabase
+            .from("admin_users")
+            .insert({ user_id: matched.id });
+          if (insErr) throw insErr;
+
+          showToast({
+            type: "success",
+            text: `Administrator access granted to ${matched.full_name || cleanEmail}!`,
+          });
+          setShowAddAdminModal(false);
+          setAddAdminEmail("");
+          loadUsers();
+          return;
+        }
+        throw new Error(rpcErr.message);
+      }
+
+      if (rpcRes && rpcRes.success === false) {
+        showToast({
+          type: "error",
+          text: rpcRes.message || "No registered user found with that email.",
+        });
+        return;
+      }
+
+      showToast({
+        type: "success",
+        text: rpcRes?.message || `Admin privileges granted to ${cleanEmail}!`,
+      });
+      setShowAddAdminModal(false);
+      setAddAdminEmail("");
+      loadUsers();
+    } catch (err: any) {
+      showToast({
+        type: "error",
+        text: err?.message || "Failed to add administrator.",
+      });
+    } finally {
+      setAddAdminLoading(false);
+    }
+  };
+
+  const handleDeleteUser = (targetUser: ManagedUser) => {
+    if (targetUser.id === currentUserId) {
+      showToast({
+        type: "error",
+        text: "You cannot delete your own account while signed in.",
+      });
+      return;
+    }
+
+    if (targetUser.is_admin) {
+      const adminCount = usersList.filter((u) => u.is_admin).length;
+      if (adminCount <= 1) {
+        showToast({
+          type: "error",
+          text: "Cannot delete the sole remaining administrator.",
+        });
+        return;
+      }
+    }
+
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete User Account",
+      itemName: `${targetUser.full_name} (${targetUser.email})`,
+      message: `Are you sure you want to permanently delete this user account? Their profile and any associated requests will be removed. This cannot be undone.`,
+      onConfirm: async () => {
+        try {
+          const { error: rpcErr } = await supabase.rpc("delete_user_by_admin", {
+            p_user_id: targetUser.id,
+          });
+
+          if (rpcErr) {
+            // Direct fallback
+            if (targetUser.is_admin) {
+              await supabase
+                .from("admin_users")
+                .delete()
+                .eq("user_id", targetUser.id);
+            }
+            await supabase
+              .from("custom_requests")
+              .delete()
+              .eq("user_id", targetUser.id);
+          }
+
+          showToast({
+            type: "success",
+            text: `User account deleted successfully.`,
+          });
+          if (selectedUserDetails?.id === targetUser.id) {
+            setSelectedUserDetails(null);
+          }
+          loadUsers();
+        } catch (err: any) {
+          showToast({
+            type: "error",
+            text: `Failed to delete user: ${err?.message || "Unknown error"}`,
+          });
+        }
+      },
+    });
+  };
+
   useEffect(() => {
     loadRequests();
     loadOrders();
     loadFurnitureOptions();
     loadProducts();
-  }, [loadRequests, loadOrders, loadFurnitureOptions, loadProducts]);
+    loadUsers();
+  }, [loadRequests, loadOrders, loadFurnitureOptions, loadProducts, loadUsers]);
 
   async function handleAddProduct(e: React.FormEvent) {
     e.preventDefault();
@@ -698,64 +1442,73 @@ export default function AdminDashboard() {
       return;
     }
 
+    if (!productForm.image_files.length) {
+      setProductFeedback({
+        type: "error",
+        text: "Please upload at least 1 image for the product (up to 5 images).",
+      });
+      return;
+    }
+
     setProductsLoading(true);
     setProductFeedback(null);
 
     try {
-      let finalImageUrl = productForm.image_url.trim();
-
-      if (productForm.image_file) {
-        const file = productForm.image_file;
-        const fileExt = file.name.split(".").pop();
-        const filePath = `products/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+      const uploadedUrls: string[] = [];
+      for (let i = 0; i < productForm.image_files.length; i++) {
+        const file = productForm.image_files[i];
+        const fileExt = file.name.split(".").pop() || "jpg";
+        const filePath = `products/${Date.now()}-${i}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
         const { error: uploadError } = await supabase.storage
           .from("gavika-project-files")
           .upload(filePath, file, { upsert: true });
 
         if (uploadError) {
-          setProductFeedback({
-            type: "error",
-            text: `Image upload failed: ${uploadError.message}`,
-          });
-          setProductsLoading(false);
-          return;
+          throw new Error(`Failed to upload image ${i + 1}: ${uploadError.message}`);
         }
 
         const { data: publicUrlData } = supabase.storage
           .from("gavika-project-files")
           .getPublicUrl(filePath);
 
-        finalImageUrl = publicUrlData.publicUrl;
+        uploadedUrls.push(publicUrlData.publicUrl);
       }
 
-      if (!finalImageUrl) {
-        setProductFeedback({
-          type: "error",
-          text: "Please provide either an image file or an image URL.",
-        });
-        setProductsLoading(false);
-        return;
-      }
+      const productPayload = {
+        name: productForm.name.trim(),
+        category: productForm.category,
+        description: productForm.description.trim() || null,
+        price: productForm.price.trim() || "Custom Quote",
+        image_url: uploadedUrls[0],
+        images: uploadedUrls,
+      };
 
-      const { data, error: insertError } = await supabase
+      let { data, error: insertError } = await supabase
         .from("products")
-        .insert({
+        .insert(productPayload)
+        .select()
+        .single();
+
+      if (insertError && insertError.message?.toLowerCase().includes("images")) {
+        const fallbackPayload = {
           name: productForm.name.trim(),
           category: productForm.category,
           description: productForm.description.trim() || null,
           price: productForm.price.trim() || "Custom Quote",
-          image_url: finalImageUrl,
-        })
-        .select()
-        .single();
+          image_url: uploadedUrls.join("|||"),
+        };
+        const fallbackRes = await supabase
+          .from("products")
+          .insert(fallbackPayload)
+          .select()
+          .single();
+        data = fallbackRes.data;
+        insertError = fallbackRes.error;
+      }
 
       if (insertError) {
-        setProductFeedback({
-          type: "error",
-          text: insertError.message || "Failed to add product to database.",
-        });
-        return;
+        throw new Error(insertError.message || "Failed to add product to database.");
       }
 
       if (data) {
@@ -765,12 +1518,12 @@ export default function AdminDashboard() {
           category: furnitureTypesList[0]?.name || "",
           description: "",
           price: "Custom Quote",
-          image_url: "",
-          image_file: null,
+          image_files: [],
+          image_previews: [],
         });
         setProductFeedback({
           type: "success",
-          text: `"${data.name}" added to catalogue successfully!`,
+          text: `"${data.name}" added with ${uploadedUrls.length} image(s) successfully!`,
         });
       }
     } catch (err: any) {
@@ -783,44 +1536,135 @@ export default function AdminDashboard() {
     }
   }
 
-  function handleDeleteProduct(id: string, name: string) {
+  function handleDeleteProduct(
+    productOrId: CatalogueProduct | string,
+    fallbackName?: string
+  ) {
+    const targetProduct: CatalogueProduct | undefined =
+      typeof productOrId === "object"
+        ? productOrId
+        : productsList.find((p) => p.id === productOrId);
+
+    const productId = typeof productOrId === "string" ? productOrId : productOrId.id;
+    const productName = targetProduct?.name || fallbackName || "Product";
+    const imagesToDelete = targetProduct ? extractProductImages(targetProduct) : [];
+
     setDeleteConfirm({
       isOpen: true,
       title: "Delete Product Design",
-      message: "Are you sure you want to permanently delete this design from your public catalogue? This action cannot be undone.",
-      itemName: name,
+      message: `Are you sure you want to permanently delete "${productName}" from your public catalogue? This action cannot be undone and will permanently delete all associated images from storage.`,
+      itemName: productName,
       onConfirm: async () => {
-        const { error: deleteError } = await supabase
-          .from("products")
-          .delete()
-          .eq("id", id);
+        setProductsLoading(true);
+        try {
+          const { error: deleteError } = await supabase
+            .from("products")
+            .delete()
+            .eq("id", productId);
 
-        if (deleteError) {
+          if (deleteError) {
+            setProductFeedback({
+              type: "error",
+              text: deleteError.message || "Failed to delete product.",
+            });
+            return;
+          }
+
+          // Clean up related image files from Supabase Storage
+          if (imagesToDelete.length > 0) {
+            await deleteProductImagesFromStorage(supabase, imagesToDelete);
+          }
+
+          setProductsList((prev) => prev.filter((p) => p.id !== productId));
+          setProductFeedback({
+            type: "success",
+            text: `Deleted "${productName}" and cleaned up image storage.`,
+          });
+        } catch (err: any) {
           setProductFeedback({
             type: "error",
-            text: deleteError.message || "Failed to delete product.",
+            text: err?.message || "Failed to delete product.",
           });
-          return;
+        } finally {
+          setProductsLoading(false);
         }
+      },
+    });
+  }
 
-        setProductsList((prev) => prev.filter((p) => p.id !== id));
-        setProductFeedback({
-          type: "success",
-          text: `Deleted "${name}" from catalogue.`,
-        });
+  function handleDeleteRequest(request: CustomRequest) {
+    setDeleteConfirm({
+      isOpen: true,
+      title: "Delete Custom Request",
+      message: `Are you sure you want to permanently delete request ${request.request_id} for "${request.full_name}"? All associated quotations, orders, and uploaded customer files will also be permanently removed. This action cannot be undone.`,
+      itemName: `${request.request_id} - ${request.full_name}`,
+      onConfirm: async () => {
+        try {
+          // Clean up related orders and quotations first to prevent foreign key blocks
+          await supabase.from("orders").delete().eq("request_id", request.id);
+          await supabase.from("quotations").delete().eq("request_id", request.id);
+
+          // Direct delete on custom_requests
+          const { error: deleteError } = await supabase
+            .from("custom_requests")
+            .delete()
+            .eq("id", request.id);
+
+          if (deleteError) {
+            showToast({
+              type: "error",
+              text: deleteError.message || "Failed to delete request.",
+            });
+            return;
+          }
+
+          // Delete customer reference image from storage if present
+          if (request.reference_image_url) {
+            await deleteProductImagesFromStorage(supabase, [
+              request.reference_image_url,
+            ]);
+          }
+
+          // Update UI state immediately
+          setRequests((prev) => prev.filter((r) => r.id !== request.id));
+          setOrdersList((prev) =>
+            prev.filter((o) => o.request_id !== request.id)
+          );
+          setQuotations((prev) => {
+            const next = { ...prev };
+            delete next[request.id];
+            return next;
+          });
+
+          if (selectedRequest?.id === request.id) {
+            closeQuotation();
+          }
+
+          showToast({
+            type: "success",
+            text: `Request ${request.request_id} deleted successfully.`,
+          });
+        } catch (err: any) {
+          showToast({
+            type: "error",
+            text: err?.message || "Failed to delete request.",
+          });
+        }
       },
     });
   }
 
   function openEditProduct(product: CatalogueProduct) {
+    const existingImgs = extractProductImages(product);
     setEditingProduct(product);
     setEditForm({
       name: product.name,
       category: product.category,
       description: product.description || "",
       price: product.price,
-      image_url: product.image_url,
-      image_file: null,
+      existing_images: existingImgs,
+      new_image_files: [],
+      new_image_previews: [],
     });
   }
 
@@ -831,8 +1675,9 @@ export default function AdminDashboard() {
       category: "",
       description: "",
       price: "",
-      image_url: "",
-      image_file: null,
+      existing_images: [],
+      new_image_files: [],
+      new_image_previews: [],
     });
   }
 
@@ -841,68 +1686,91 @@ export default function AdminDashboard() {
     if (!editingProduct) return;
     if (!editForm.name.trim()) return;
 
+    const totalRemaining = editForm.existing_images.length + editForm.new_image_files.length;
+    if (totalRemaining === 0) {
+      setProductFeedback({
+        type: "error",
+        text: "Product must have at least 1 image (up to 5).",
+      });
+      return;
+    }
+
     setProductsLoading(true);
     setProductFeedback(null);
 
-    try {
-      let finalImageUrl = editForm.image_url.trim();
+    const originalImages = extractProductImages(editingProduct);
+    const removedImages = originalImages.filter(
+      (img) => !editForm.existing_images.includes(img)
+    );
 
-      if (editForm.image_file) {
-        const file = editForm.image_file;
-        const fileExt = file.name.split(".").pop();
-        const filePath = `products/${Date.now()}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+    try {
+      const newlyUploadedUrls: string[] = [];
+      for (let i = 0; i < editForm.new_image_files.length; i++) {
+        const file = editForm.new_image_files[i];
+        const fileExt = file.name.split(".").pop() || "jpg";
+        const filePath = `products/${Date.now()}-${i}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
         const { error: uploadError } = await supabase.storage
           .from("gavika-project-files")
           .upload(filePath, file, { upsert: true });
 
         if (uploadError) {
-          setProductFeedback({
-            type: "error",
-            text: `Image upload failed: ${uploadError.message}`,
-          });
-          setProductsLoading(false);
-          return;
+          throw new Error(`Failed to upload new image ${i + 1}: ${uploadError.message}`);
         }
 
         const { data: publicUrlData } = supabase.storage
           .from("gavika-project-files")
           .getPublicUrl(filePath);
 
-        finalImageUrl = publicUrlData.publicUrl;
+        newlyUploadedUrls.push(publicUrlData.publicUrl);
       }
 
-      if (!finalImageUrl) {
-        setProductFeedback({
-          type: "error",
-          text: "Product must have an image.",
-        });
-        setProductsLoading(false);
-        return;
-      }
+      const allUrls = [...editForm.existing_images, ...newlyUploadedUrls];
 
-      const { data, error: updateError } = await supabase
+      const updatePayload = {
+        name: editForm.name.trim(),
+        category: editForm.category.trim(),
+        description: editForm.description.trim() || null,
+        price: editForm.price.trim() || "Custom Quote",
+        image_url: allUrls[0] || "",
+        images: allUrls,
+      };
+
+      let { data, error: updateError } = await supabase
         .from("products")
-        .update({
-          name: editForm.name.trim(),
-          category: editForm.category.trim(),
-          description: editForm.description.trim() || null,
-          price: editForm.price.trim() || "Custom Quote",
-          image_url: finalImageUrl,
-        })
+        .update(updatePayload)
         .eq("id", editingProduct.id)
         .select()
         .single();
 
+      if (updateError && updateError.message?.toLowerCase().includes("images")) {
+        const fallbackPayload = {
+          name: editForm.name.trim(),
+          category: editForm.category.trim(),
+          description: editForm.description.trim() || null,
+          price: editForm.price.trim() || "Custom Quote",
+          image_url: allUrls.join("|||"),
+        };
+        const fallbackRes = await supabase
+          .from("products")
+          .update(fallbackPayload)
+          .eq("id", editingProduct.id)
+          .select()
+          .single();
+        data = fallbackRes.data;
+        updateError = fallbackRes.error;
+      }
+
       if (updateError) {
-        setProductFeedback({
-          type: "error",
-          text: updateError.message || "Failed to update product.",
-        });
-        return;
+        throw new Error(updateError.message || "Failed to update product.");
       }
 
       if (data) {
+        // Purge any images removed by the admin from Supabase Storage
+        if (removedImages.length > 0) {
+          await deleteProductImagesFromStorage(supabase, removedImages);
+        }
+
         setProductsList((prev) =>
           prev.map((p) => (p.id === data.id ? data : p))
         );
@@ -915,7 +1783,7 @@ export default function AdminDashboard() {
     } catch (err: any) {
       setProductFeedback({
         type: "error",
-        text: err.message || "Unexpected error updating product.",
+        text: err.message || "Unexpected error while updating product.",
       });
     } finally {
       setProductsLoading(false);
@@ -1379,16 +2247,28 @@ export default function AdminDashboard() {
               </svg>
             </button>
 
-            {/* Trash / Warning Badge */}
-            <div className="mx-auto w-16 h-16 rounded-2xl bg-red-50 border border-red-100 text-red-600 flex items-center justify-center mb-4 shadow-sm">
-              <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  strokeWidth={1.75}
-                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
-                />
-              </svg>
+            {/* Modal Icon Badge */}
+            <div
+              className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm ${
+                deleteConfirm.variant === "primary"
+                  ? "bg-amber-50 border border-amber-200 text-amber-800 text-3xl"
+                  : deleteConfirm.variant === "warning"
+                  ? "bg-orange-50 border border-orange-200 text-orange-600 text-3xl"
+                  : "bg-red-50 border border-red-100 text-red-600"
+              }`}
+            >
+              {deleteConfirm.icon ? (
+                <span className="text-3xl">{deleteConfirm.icon}</span>
+              ) : (
+                <svg className="w-8 h-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    strokeWidth={1.75}
+                    d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                  />
+                </svg>
+              )}
             </div>
 
             {/* Title & Description */}
@@ -1413,7 +2293,13 @@ export default function AdminDashboard() {
                 type="button"
                 disabled={deleteConfirm.loading}
                 onClick={handleExecuteDelete}
-                className="w-full py-3 px-4 rounded-xl bg-red-600 hover:bg-red-700 active:scale-[0.98] text-sm font-semibold text-white shadow-lg shadow-red-600/25 flex items-center justify-center gap-2 transition disabled:opacity-50"
+                className={`w-full py-3 px-4 rounded-xl active:scale-[0.98] text-sm font-semibold text-white flex items-center justify-center gap-2 transition disabled:opacity-50 ${
+                  deleteConfirm.variant === "primary"
+                    ? "bg-[#3d281c] hover:bg-[#5a3927] shadow-lg shadow-[#3d281c]/25"
+                    : deleteConfirm.variant === "warning"
+                    ? "bg-amber-700 hover:bg-amber-800 shadow-lg shadow-amber-700/25"
+                    : "bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/25"
+                }`}
               >
                 {deleteConfirm.loading ? (
                   <>
@@ -1421,14 +2307,18 @@ export default function AdminDashboard() {
                       <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
                       <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
                     </svg>
-                    <span>Deleting...</span>
+                    <span>{deleteConfirm.loadingText || "Processing..."}</span>
                   </>
                 ) : (
                   <>
-                    <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                    <span>Delete</span>
+                    {deleteConfirm.icon ? (
+                      <span>{deleteConfirm.icon}</span>
+                    ) : (
+                      <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                    )}
+                    <span>{deleteConfirm.confirmText || "Delete"}</span>
                   </>
                 )}
               </button>
@@ -1581,6 +2471,29 @@ export default function AdminDashboard() {
           >
             ⚙️ Master Options
           </button>
+
+          <button
+            onClick={() => {
+              setActiveTab("users");
+              loadUsers();
+            }}
+            className={`px-5 py-2.5 rounded-lg font-medium text-sm transition flex items-center gap-2 ${
+              activeTab === "users"
+                ? "bg-[#3d281c] text-white shadow-sm"
+                : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
+            }`}
+          >
+            <span>👥 User Management</span>
+            <span
+              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+                activeTab === "users"
+                  ? "bg-[#7a5235] text-white"
+                  : "bg-[#f5efe6] text-[#7a5235]"
+              }`}
+            >
+              {usersList.length}
+            </span>
+          </button>
         </div>
 
         {activeTab === "products" ? (
@@ -1693,28 +2606,70 @@ export default function AdminDashboard() {
                   />
                 </div>
 
-                {/* Image Section */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-5 p-4 rounded-xl bg-[#faf7f2] border border-[#e7dccd]">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Upload Image File
-                    </label>
-                    <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) =>
-                        setProductForm((prev) => ({
-                          ...prev,
-                          image_file: e.target.files?.[0] || null,
-                        }))
-                      }
-                      className="w-full rounded-lg border border-gray-300 bg-white text-gray-700 px-3 py-2 text-sm"
-                    />
-                    <p className="text-xs text-gray-500 mt-1">
-                      JPG, PNG, WEBP. Uploads directly to Supabase storage.
-                    </p>
+                {/* Image Section (Max 5 images) */}
+                <div className="p-4 rounded-xl bg-[#faf7f2] border border-[#e7dccd] space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700">
+                        Product Images (Upload up to 5) *
+                      </label>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        First image will be the primary cover photo.
+                      </p>
+                    </div>
+                    <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-white border border-[#ded5c8] text-[#7a5235]">
+                      {productForm.image_files.length} / 5 Selected
+                    </span>
                   </div>
 
+                  {productForm.image_files.length < 5 && (
+                    <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-[#cfc3b3] rounded-xl bg-white hover:bg-[#fbf9f6] cursor-pointer transition">
+                      <span className="text-2xl mb-1">📸</span>
+                      <span className="text-xs font-semibold text-[#5a3927]">
+                        Click to select images (JPG, PNG, WEBP)
+                      </span>
+                      <span className="text-[11px] text-gray-400 mt-0.5">
+                        Select up to 5 photos for this design
+                      </span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={handleSelectProductImages}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
+
+                  {productForm.image_previews.length > 0 && (
+                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-2.5 pt-2">
+                      {productForm.image_previews.map((previewUrl, idx) => (
+                        <div
+                          key={idx}
+                          className="relative group rounded-xl overflow-hidden border border-gray-200 aspect-square bg-gray-100 shadow-2xs"
+                        >
+                          <img
+                            src={previewUrl}
+                            alt={`Preview ${idx + 1}`}
+                            className="w-full h-full object-cover"
+                          />
+                          {idx === 0 && (
+                            <span className="absolute top-1.5 left-1.5 bg-[#3d281c] text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow">
+                              Cover
+                            </span>
+                          )}
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveProductImage(idx)}
+                            className="absolute top-1.5 right-1.5 bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-90 hover:opacity-100 active:scale-90 shadow transition"
+                            title="Remove image"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 <div className="flex justify-end">
@@ -1752,65 +2707,18 @@ export default function AdminDashboard() {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                  {productsList.map((product) => (
-                    <div
-                      key={product.id}
-                      className="rounded-2xl bg-white border border-[#e7dccd] overflow-hidden shadow-sm flex flex-col justify-between"
-                    >
-                      <div>
-                        <div className="relative aspect-[4/3] bg-gray-100 overflow-hidden">
-                          <img
-                            src={product.image_url}
-                            alt={product.name}
-                            className="w-full h-full object-cover"
-                            onError={(e) => {
-                              (e.target as HTMLImageElement).src =
-                                "https://images.unsplash.com/photo-1555041469-a586c61ea9bc?auto=format&fit=crop&w=900&q=80";
-                            }}
-                          />
-                          <span className="absolute top-3 left-3 rounded-full bg-white/90 px-3 py-1 text-xs font-semibold text-[#3d281c]">
-                            {product.category}
-                          </span>
-                        </div>
-
-                        <div className="p-5">
-                          <div className="flex items-start justify-between gap-2">
-                            <h4 className="font-semibold text-[#3d281c] text-lg">
-                              {product.name}
-                            </h4>
-                            <span className="shrink-0 text-xs font-medium text-[#7a5235] bg-[#f5efe6] px-2.5 py-1 rounded-full">
-                              {product.price}
-                            </span>
-                          </div>
-
-                          <p className="text-sm text-gray-600 mt-2 line-clamp-2">
-                            {product.description || "No description provided."}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="p-5 pt-0 border-t border-gray-100 mt-2 flex items-center justify-between">
-
-                        <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => openEditProduct(product)}
-                            className="rounded-lg text-xs font-medium text-[#7a5235] hover:text-[#5a3927] hover:bg-[#f5efe6] px-3 py-1.5 transition border border-[#e7dccd]"
-                          >
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteProduct(product.id, product.name)}
-                            className="rounded-lg text-xs font-medium text-red-600 hover:text-red-800 hover:bg-red-50 px-3 py-1.5 transition"
-                          >
-                            Delete
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                    {productsList.map((product) => (
+                      <AdminProductCard
+                        key={product.id}
+                        product={product}
+                        onView={(index) =>
+                          setPreviewProduct({ product, activeIndex: index })
+                        }
+                        onEdit={() => openEditProduct(product)}
+                        onDelete={() => handleDeleteProduct(product)}
+                      />
+                    ))}
+                  </div>
               )}
             </div>
           </div>
@@ -2330,6 +3238,510 @@ export default function AdminDashboard() {
               })()}
             </div>
           </div>
+        ) : activeTab === "users" ? (
+          /* User Management Tab Content */
+          <div className="space-y-8">
+            {/* Header & Actions */}
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <h2 className="text-3xl font-serif font-semibold text-[#3d281c]">
+                  User Management & Roles
+                </h2>
+                <p className="text-gray-600 mt-1 text-sm">
+                  View registered users, inspect customer activity and orders, promote or demote administrators, and manage accounts.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => loadUsers()}
+                  disabled={usersLoading}
+                  className="inline-flex items-center gap-2 rounded-xl border border-[#ded5c8] bg-white px-4 py-2.5 text-xs font-semibold text-gray-700 hover:bg-[#faf7f2] transition shadow-2xs"
+                >
+                  <span className={usersLoading ? "animate-spin" : ""}>🔄</span>
+                  <span>Refresh</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setShowAddAdminModal(true)}
+                  className="inline-flex items-center gap-2 rounded-xl bg-[#3d281c] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[#5a3927] transition shadow-xs"
+                >
+                  <span>👑</span>
+                  <span>+ Promote / Add Admin</span>
+                </button>
+              </div>
+            </div>
+
+            {/* Metrics Cards */}
+            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+              <div className="bg-white rounded-2xl p-5 shadow-xs border border-[#e7dccd]">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Total Users
+                  </p>
+                  <span className="text-lg">👥</span>
+                </div>
+                <p className="text-3xl font-serif font-bold text-[#3d281c] mt-2">
+                  {usersList.length}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Registered accounts
+                </p>
+              </div>
+
+              <div className="bg-white rounded-2xl p-5 shadow-xs border border-[#e7dccd]">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Administrators
+                  </p>
+                  <span className="text-lg">👑</span>
+                </div>
+                <p className="text-3xl font-serif font-bold text-amber-700 mt-2">
+                  {usersList.filter((u) => u.is_admin).length}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Full dashboard access
+                </p>
+              </div>
+
+              <div className="bg-white rounded-2xl p-5 shadow-xs border border-[#e7dccd]">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Customers
+                  </p>
+                  <span className="text-lg">👤</span>
+                </div>
+                <p className="text-3xl font-serif font-bold text-slate-700 mt-2">
+                  {usersList.filter((u) => !u.is_admin).length}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Standard customer profiles
+                </p>
+              </div>
+
+              <div className="bg-white rounded-2xl p-5 shadow-xs border border-[#e7dccd]">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Active Buyers
+                  </p>
+                  <span className="text-lg">📦</span>
+                </div>
+                <p className="text-3xl font-serif font-bold text-emerald-700 mt-2">
+                  {usersList.filter((u) => u.total_orders > 0 || u.total_requests > 0).length}
+                </p>
+                <p className="text-xs text-gray-500 mt-1">
+                  Have requests or orders
+                </p>
+              </div>
+            </div>
+
+            {/* Filter and Search Bar */}
+            <div className="bg-white rounded-2xl p-4 sm:p-5 shadow-xs border border-[#e7dccd] space-y-4">
+              <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
+                {/* Search */}
+                <div className="relative flex-1">
+                  <span className="absolute inset-y-0 left-3 flex items-center text-gray-400 text-sm">
+                    🔍
+                  </span>
+                  <input
+                    type="text"
+                    value={userSearchQuery}
+                    onChange={(e) => setUserSearchQuery(e.target.value)}
+                    placeholder="Search users by name, email, phone, or ID..."
+                    className="w-full pl-9 pr-9 py-2 rounded-xl border border-gray-200 bg-[#faf7f2] text-sm text-gray-800 placeholder-gray-400 focus:outline-none focus:border-[#7a5235] focus:bg-white transition"
+                  />
+                  {userSearchQuery && (
+                    <button
+                      type="button"
+                      onClick={() => setUserSearchQuery("")}
+                      className="absolute inset-y-0 right-3 flex items-center text-xs text-gray-400 hover:text-gray-600"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+
+                {/* Role Filter Pills */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-1 md:pb-0">
+                  <button
+                    type="button"
+                    onClick={() => setUserRoleFilter("All")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 ${
+                      userRoleFilter === "All"
+                        ? "bg-[#3d281c] text-white shadow-2xs"
+                        : "bg-[#faf7f2] text-gray-600 hover:bg-gray-100 border border-gray-200"
+                    }`}
+                  >
+                    All ({usersList.length})
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserRoleFilter("Admin")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 flex items-center gap-1 ${
+                      userRoleFilter === "Admin"
+                        ? "bg-amber-700 text-white shadow-2xs"
+                        : "bg-[#faf7f2] text-gray-600 hover:bg-gray-100 border border-gray-200"
+                    }`}
+                  >
+                    <span>👑 Admins</span>
+                    <span>({usersList.filter((u) => u.is_admin).length})</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserRoleFilter("Customer")}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 flex items-center gap-1 ${
+                      userRoleFilter === "Customer"
+                        ? "bg-slate-700 text-white shadow-2xs"
+                        : "bg-[#faf7f2] text-gray-600 hover:bg-gray-100 border border-gray-200"
+                    }`}
+                  >
+                    <span>👤 Customers</span>
+                    <span>({usersList.filter((u) => !u.is_admin).length})</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Users List Table (Desktop) */}
+              {(() => {
+                const filteredUsers = usersList.filter((u) => {
+                  const q = userSearchQuery.trim().toLowerCase();
+                  const matchesSearch =
+                    !q ||
+                    u.full_name.toLowerCase().includes(q) ||
+                    u.email.toLowerCase().includes(q) ||
+                    u.mobile.toLowerCase().includes(q) ||
+                    u.id.toLowerCase().includes(q);
+
+                  if (!matchesSearch) return false;
+                  if (userRoleFilter === "Admin") return u.is_admin;
+                  if (userRoleFilter === "Customer") return !u.is_admin;
+                  return true;
+                });
+
+                if (usersLoading && usersList.length === 0) {
+                  return (
+                    <div className="py-16 text-center">
+                      <div className="inline-block animate-spin text-3xl mb-3">⏳</div>
+                      <p className="text-sm font-medium text-gray-600">Loading user accounts...</p>
+                    </div>
+                  );
+                }
+
+                if (filteredUsers.length === 0) {
+                  return (
+                    <div className="py-12 text-center bg-[#faf7f2] rounded-xl border border-dashed border-[#ded5c8]">
+                      <span className="text-3xl block mb-2">🔍</span>
+                      <p className="text-sm font-semibold text-gray-700">No users found</p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Try adjusting your search query or role filter.
+                      </p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div className="space-y-4">
+                    {/* Desktop Table View */}
+                    <div className="hidden md:block overflow-x-auto rounded-xl border border-[#e7dccd]">
+                      <table className="w-full text-left text-sm">
+                        <thead className="bg-[#faf7f2] border-b border-[#e7dccd] text-xs font-medium text-gray-600 uppercase tracking-wider">
+                          <tr>
+                            <th className="px-5 py-3.5">User</th>
+                            <th className="px-5 py-3.5">Contact</th>
+                            <th className="px-5 py-3.5">Role</th>
+                            <th className="px-5 py-3.5">Activity</th>
+                            <th className="px-5 py-3.5">Registered</th>
+                            <th className="px-5 py-3.5 text-right">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-[#f0e8dc] bg-white">
+                          {filteredUsers.map((user) => {
+                            const isSelf = user.id === currentUserId;
+                            const initials = (user.full_name || user.email || "U")
+                              .split(" ")
+                              .map((n) => n[0])
+                              .slice(0, 2)
+                              .join("")
+                              .toUpperCase();
+
+                            return (
+                              <tr
+                                key={user.id}
+                                className="hover:bg-[#faf7f2]/60 transition"
+                              >
+                                {/* User Info */}
+                                <td className="px-5 py-4">
+                                  <div className="flex items-center gap-3">
+                                    <div
+                                      className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                                        user.is_admin
+                                          ? "bg-amber-100 text-amber-900 border border-amber-300"
+                                          : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
+                                      }`}
+                                    >
+                                      {initials}
+                                    </div>
+                                    <div className="min-w-0">
+                                      <div className="flex items-center gap-2">
+                                        <span className="font-semibold text-gray-900 truncate">
+                                          {user.full_name}
+                                        </span>
+                                        {isSelf && (
+                                          <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-100 text-blue-700 px-1.5 py-0.5 rounded">
+                                            You
+                                          </span>
+                                        )}
+                                      </div>
+                                      <div className="flex items-center gap-1.5 text-xs text-gray-500 mt-0.5">
+                                        <span className="truncate">{user.email}</span>
+                                        {user.email && (
+                                          <button
+                                            type="button"
+                                            onClick={() => {
+                                              navigator.clipboard.writeText(user.email);
+                                              showToast({
+                                                type: "success",
+                                                text: "Email copied to clipboard!",
+                                              });
+                                            }}
+                                            className="text-[11px] text-gray-400 hover:text-gray-700"
+                                            title="Copy Email"
+                                          >
+                                            📋
+                                          </button>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                {/* Contact */}
+                                <td className="px-5 py-4 text-xs text-gray-700">
+                                  {user.mobile && user.mobile !== "-" ? (
+                                    <div className="flex items-center gap-1">
+                                      <span>📞</span>
+                                      <span>{user.mobile}</span>
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-400">Not provided</span>
+                                  )}
+                                </td>
+
+                                {/* Role Badge */}
+                                <td className="px-5 py-4">
+                                  {user.is_admin ? (
+                                    <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-1 rounded-full shadow-2xs">
+                                      <span>👑</span>
+                                      <span>Administrator</span>
+                                    </span>
+                                  ) : (
+                                    <span className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 px-2.5 py-1 rounded-full">
+                                      <span>👤</span>
+                                      <span>Customer</span>
+                                    </span>
+                                  )}
+                                </td>
+
+                                {/* Activity Badges */}
+                                <td className="px-5 py-4">
+                                  <div className="flex items-center gap-2 text-xs">
+                                    <span
+                                      className={`px-2 py-0.5 rounded font-medium ${
+                                        user.total_requests > 0
+                                          ? "bg-[#f5efe6] text-[#7a5235] font-semibold"
+                                          : "bg-gray-100 text-gray-500"
+                                      }`}
+                                      title={`${user.total_requests} custom requests submitted`}
+                                    >
+                                      📋 {user.total_requests} {user.total_requests === 1 ? "req" : "reqs"}
+                                    </span>
+                                    <span
+                                      className={`px-2 py-0.5 rounded font-medium ${
+                                        user.total_orders > 0
+                                          ? "bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200"
+                                          : "bg-gray-100 text-gray-500"
+                                      }`}
+                                      title={`${user.total_orders} orders placed`}
+                                    >
+                                      📦 {user.total_orders} {user.total_orders === 1 ? "order" : "orders"}
+                                    </span>
+                                  </div>
+                                </td>
+
+                                {/* Registration Date */}
+                                <td className="px-5 py-4 text-xs text-gray-500 whitespace-nowrap">
+                                  {user.created_at
+                                    ? new Date(user.created_at).toLocaleDateString("en-IN", {
+                                        day: "numeric",
+                                        month: "short",
+                                        year: "numeric",
+                                      })
+                                    : "-"}
+                                </td>
+
+                                {/* Actions */}
+                                <td className="px-5 py-4 text-right">
+                                  <div className="inline-flex items-center gap-1.5 justify-end">
+                                    {/* View Activity / Profile */}
+                                    <button
+                                      type="button"
+                                      onClick={() => setSelectedUserDetails(user)}
+                                      className="rounded-lg bg-white border border-[#ded5c8] px-2.5 py-1.5 text-xs font-semibold text-gray-700 hover:bg-[#faf7f2] transition"
+                                      title="View user requests, orders & profile"
+                                    >
+                                      <span>👁️ Details</span>
+                                    </button>
+
+                                    {/* Role Toggle */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleToggleAdminRole(user)}
+                                      className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
+                                        user.is_admin
+                                          ? "bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200"
+                                          : "bg-[#3d281c] text-white hover:bg-[#5a3927]"
+                                      }`}
+                                      title={user.is_admin ? "Demote to customer" : "Promote to administrator"}
+                                    >
+                                      {user.is_admin ? "Demote" : "👑 Make Admin"}
+                                    </button>
+
+                                    {/* Delete User */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleDeleteUser(user)}
+                                      disabled={isSelf}
+                                      className={`rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
+                                        isSelf
+                                          ? "opacity-30 cursor-not-allowed text-gray-400"
+                                          : "text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200"
+                                      }`}
+                                      title={isSelf ? "You cannot delete your own account" : "Delete user account"}
+                                    >
+                                      🗑️
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Mobile Card View */}
+                    <div className="md:hidden space-y-3">
+                      {filteredUsers.map((user) => {
+                        const isSelf = user.id === currentUserId;
+                        const initials = (user.full_name || user.email || "U")
+                          .split(" ")
+                          .map((n) => n[0])
+                          .slice(0, 2)
+                          .join("")
+                          .toUpperCase();
+
+                        return (
+                          <div
+                            key={user.id}
+                            className="bg-white rounded-xl p-4 border border-[#e7dccd] shadow-2xs space-y-3"
+                          >
+                            <div className="flex items-start justify-between gap-3">
+                              <div className="flex items-center gap-3">
+                                <div
+                                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                                    user.is_admin
+                                      ? "bg-amber-100 text-amber-900 border border-amber-300"
+                                      : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
+                                  }`}
+                                >
+                                  {initials}
+                                </div>
+                                <div>
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-semibold text-gray-900 text-sm">
+                                      {user.full_name}
+                                    </h4>
+                                    {isSelf && (
+                                      <span className="text-[9px] font-bold uppercase tracking-wider bg-blue-100 text-blue-700 px-1 py-0.5 rounded">
+                                        You
+                                      </span>
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-gray-500 break-all">{user.email}</p>
+                                </div>
+                              </div>
+
+                              {user.is_admin ? (
+                                <span className="text-[11px] font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded-full shrink-0">
+                                  👑 Admin
+                                </span>
+                              ) : (
+                                <span className="text-[11px] font-medium text-slate-700 bg-slate-50 border border-slate-200 px-2 py-0.5 rounded-full shrink-0">
+                                  👤 Customer
+                                </span>
+                              )}
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs text-gray-600 pt-2 border-t border-gray-100">
+                              <div>
+                                <span>📞 {user.mobile && user.mobile !== "-" ? user.mobile : "No phone"}</span>
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <span className="bg-[#f5efe6] text-[#7a5235] px-2 py-0.5 rounded font-semibold text-[11px]">
+                                  {user.total_requests} reqs
+                                </span>
+                                <span className="bg-emerald-50 text-emerald-800 px-2 py-0.5 rounded font-semibold text-[11px]">
+                                  {user.total_orders} orders
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Mobile Actions */}
+                            <div className="grid grid-cols-3 gap-2 pt-1">
+                              <button
+                                type="button"
+                                onClick={() => setSelectedUserDetails(user)}
+                                className="py-2 text-center rounded-lg bg-[#faf7f2] border border-[#ded5c8] text-xs font-semibold text-gray-700 hover:bg-[#f0e8dc] transition"
+                              >
+                                👁️ Details
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleToggleAdminRole(user)}
+                                className={`py-2 text-center rounded-lg text-xs font-semibold transition ${
+                                  user.is_admin
+                                    ? "bg-amber-50 text-amber-800 border border-amber-200"
+                                    : "bg-[#3d281c] text-white"
+                                }`}
+                              >
+                                {user.is_admin ? "Demote" : "👑 Promote"}
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteUser(user)}
+                                disabled={isSelf}
+                                className={`py-2 text-center rounded-lg text-xs font-semibold transition ${
+                                  isSelf
+                                    ? "opacity-30 cursor-not-allowed bg-gray-100 text-gray-400"
+                                    : "bg-rose-50 text-rose-700 border border-rose-200"
+                                }`}
+                              >
+                                🗑️ Delete
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })()}
+            </div>
+          </div>
         ) : (
           /* Customer Requests Tab Content */
           <>
@@ -2555,30 +3967,41 @@ export default function AdminDashboard() {
                         </td>
 
                         <td className="px-6 py-4">
-                          {canCreateQuotation ? (
+                          <div className="flex items-center gap-2">
+                            {canCreateQuotation ? (
+                              <button
+                                onClick={() =>
+                                  openCreateQuotation(request)
+                                }
+                                className="whitespace-nowrap rounded-lg bg-[#5a3927] text-white px-3 py-1.5 text-xs font-medium hover:bg-[#432a1e] transition"
+                              >
+                                {quotation
+                                  ? "New Quotation"
+                                  : "Create Quotation"}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() =>
+                                  openViewQuotation(
+                                    request,
+                                    quotation
+                                  )
+                                }
+                                className="whitespace-nowrap rounded-lg border border-[#7a5235] text-[#7a5235] px-3 py-1.5 text-xs font-medium hover:bg-[#f5efe6] transition"
+                              >
+                                View Quotation
+                              </button>
+                            )}
+
                             <button
-                              onClick={() =>
-                                openCreateQuotation(request)
-                              }
-                              className="whitespace-nowrap rounded-lg bg-[#5a3927] text-white px-4 py-2 text-xs font-medium hover:bg-[#432a1e] transition"
+                              type="button"
+                              onClick={() => handleDeleteRequest(request)}
+                              className="whitespace-nowrap rounded-lg text-xs font-medium text-red-600 hover:text-red-800 hover:bg-red-50 px-2.5 py-1.5 transition border border-red-200"
+                              title={`Delete request ${request.request_id}`}
                             >
-                              {quotation
-                                ? "Create New Quotation"
-                                : "Create Quotation"}
+                              Delete
                             </button>
-                          ) : (
-                            <button
-                              onClick={() =>
-                                openViewQuotation(
-                                  request,
-                                  quotation
-                                )
-                              }
-                              className="whitespace-nowrap rounded-lg border border-[#7a5235] text-[#7a5235] px-4 py-2 text-xs font-medium hover:bg-[#f5efe6] transition"
-                            >
-                              View Quotation
-                            </button>
-                          )}
+                          </div>
                         </td>
                       </tr>
                     );
@@ -2614,14 +4037,26 @@ export default function AdminDashboard() {
                   </p>
                 </div>
 
-                <button
-                  onClick={closeQuotation}
-                  disabled={quotationLoading}
-                  className="text-gray-400 hover:text-gray-700 text-xl disabled:opacity-50"
-                  aria-label="Close quotation modal"
-                >
-                  ✕
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteRequest(selectedRequest)}
+                    disabled={quotationLoading}
+                    className="text-xs text-red-600 hover:text-red-800 hover:bg-red-50 border border-red-200 rounded-lg px-2.5 py-1.5 font-medium transition disabled:opacity-50 flex items-center gap-1"
+                    title="Delete this custom request"
+                  >
+                    <span>🗑️</span>
+                    <span>Delete</span>
+                  </button>
+                  <button
+                    onClick={closeQuotation}
+                    disabled={quotationLoading}
+                    className="text-gray-400 hover:text-gray-700 text-xl disabled:opacity-50 p-1"
+                    aria-label="Close quotation modal"
+                  >
+                    ✕
+                  </button>
+                </div>
               </div>
             </div>
 
@@ -3134,54 +4569,89 @@ export default function AdminDashboard() {
                 />
               </div>
 
-              {/* Current Image & Update Option */}
+              {/* Product Images (Max 5) */}
               <div className="p-4 rounded-xl bg-[#faf7f2] border border-[#e7dccd] space-y-3">
-                <label className="block text-xs font-semibold uppercase tracking-wider text-[#7a5235]">
-                  Product Image
-                </label>
-
-                {editForm.image_url && (
-                  <div className="flex items-center gap-3">
-                    <img
-                      src={editForm.image_url}
-                      alt="Preview"
-                      className="w-16 h-16 object-cover rounded-lg border border-gray-200"
-                    />
-                    <span className="text-xs text-gray-500 break-all">
-                      Current image preview
-                    </span>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700">
+                      Product Images (Max 5)
+                    </label>
+                    <p className="text-xs text-gray-500 mt-0.5">
+                      First image is the cover. Manage existing or upload new.
+                    </p>
                   </div>
-                )}
-
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">
-                    Upload New Image File (Optional)
-                  </label>
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={(e) =>
-                      setEditForm((prev) => ({
-                        ...prev,
-                        image_file: e.target.files?.[0] || null,
-                      }))
-                    }
-                    className="w-full rounded-lg border border-gray-300 bg-white text-gray-700 px-3 py-1.5 text-xs"
-                  />
+                  <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-white border border-[#ded5c8] text-[#7a5235]">
+                    {editForm.existing_images.length + editForm.new_image_files.length} / 5
+                  </span>
                 </div>
 
-                <div>
-                  <label className="block text-xs text-gray-600 mb-1">
-                    Or Edit Image URL
-                  </label>
-                  <input
-                    type="url"
-                    value={editForm.image_url}
-                    onChange={(e) =>
-                      setEditForm((prev) => ({ ...prev, image_url: e.target.value }))
-                    }
-                    className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-2 text-xs outline-none focus:border-[#7a5235]"
-                  />
+                {/* Grid of Existing & New Images */}
+                <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
+                  {editForm.existing_images.map((imgUrl, idx) => (
+                    <div
+                      key={`existing-${idx}`}
+                      className="relative group rounded-xl overflow-hidden border border-gray-200 aspect-square bg-gray-100 shadow-2xs"
+                    >
+                      <img
+                        src={imgUrl}
+                        alt={`Existing ${idx + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      {idx === 0 && (
+                        <span className="absolute top-1.5 left-1.5 bg-[#3d281c] text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow">
+                          Cover
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveExistingEditImage(idx)}
+                        className="absolute top-1.5 right-1.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-90 hover:opacity-100 shadow transition"
+                        title="Remove image"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+
+                  {editForm.new_image_previews.map((prevUrl, idx) => (
+                    <div
+                      key={`new-${idx}`}
+                      className="relative group rounded-xl overflow-hidden border border-emerald-300 aspect-square bg-gray-100 shadow-2xs"
+                    >
+                      <img
+                        src={prevUrl}
+                        alt={`New ${idx + 1}`}
+                        className="w-full h-full object-cover"
+                      />
+                      <span className="absolute bottom-1 left-1 bg-emerald-700 text-white text-[9px] font-bold px-1 rounded shadow">
+                        New
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveNewEditImage(idx)}
+                        className="absolute top-1.5 right-1.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-90 hover:opacity-100 shadow transition"
+                        title="Remove image"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+
+                  {editForm.existing_images.length + editForm.new_image_files.length < 5 && (
+                    <label className="flex flex-col items-center justify-center border-2 border-dashed border-[#cfc3b3] rounded-xl bg-white hover:bg-[#fbf9f6] cursor-pointer aspect-square transition text-center p-2">
+                      <span className="text-xl">📸</span>
+                      <span className="text-[10px] font-semibold text-[#5a3927] mt-1">
+                        + Add Photo
+                      </span>
+                      <input
+                        type="file"
+                        multiple
+                        accept="image/jpeg,image/png,image/webp"
+                        onChange={handleSelectEditImages}
+                        className="hidden"
+                      />
+                    </label>
+                  )}
                 </div>
               </div>
 
@@ -3537,6 +5007,578 @@ export default function AdminDashboard() {
               >
                 Close
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* User Details & Activity Modal */}
+      {selectedUserDetails && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 sm:p-6 overflow-y-auto">
+          <div className="bg-[#faf7f2] rounded-3xl border border-[#ded5c8] shadow-2xl max-w-3xl w-full overflow-hidden my-auto max-h-[90vh] flex flex-col animate-in fade-in zoom-in-95 duration-150">
+            {/* Modal Header */}
+            <div className="border-b border-[#ded5c8] bg-white px-6 py-5 flex items-center justify-between shrink-0">
+              <div className="flex items-center gap-3.5">
+                <div
+                  className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-base shadow-xs shrink-0 ${
+                    selectedUserDetails.is_admin
+                      ? "bg-amber-100 text-amber-900 border border-amber-300"
+                      : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
+                  }`}
+                >
+                  {(selectedUserDetails.full_name || selectedUserDetails.email || "U")
+                    .split(" ")
+                    .map((n) => n[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase()}
+                </div>
+                <div>
+                  <div className="flex items-center gap-2">
+                    <h3 className="text-xl font-serif font-bold text-[#3d281c]">
+                      {selectedUserDetails.full_name}
+                    </h3>
+                    {selectedUserDetails.id === currentUserId && (
+                      <span className="text-[10px] font-bold uppercase tracking-wider bg-blue-100 text-blue-700 px-2 py-0.5 rounded-full">
+                        You
+                      </span>
+                    )}
+                    {selectedUserDetails.is_admin ? (
+                      <span className="text-xs font-semibold text-amber-800 bg-amber-50 border border-amber-200 px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-2xs">
+                        <span>👑</span>
+                        <span>Admin</span>
+                      </span>
+                    ) : (
+                      <span className="text-xs font-medium text-slate-700 bg-slate-50 border border-slate-200 px-2.5 py-0.5 rounded-full">
+                        <span>👤</span>
+                        <span>Customer</span>
+                      </span>
+                    )}
+                  </div>
+                  <p className="text-xs text-gray-500 mt-0.5">{selectedUserDetails.email}</p>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedUserDetails(null)}
+                className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-800 transition"
+                title="Close"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Scrollable Body */}
+            <div className="p-6 overflow-y-auto space-y-6">
+              {/* Profile Details Grid */}
+              <div className="bg-white rounded-2xl p-5 border border-[#e7dccd] shadow-xs">
+                <h4 className="text-xs font-bold text-gray-400 uppercase tracking-wider mb-3">
+                  Account Overview
+                </h4>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+                  <div>
+                    <span className="text-gray-500 block">Phone / Mobile</span>
+                    <span className="font-semibold text-gray-800 mt-0.5 block">
+                      {selectedUserDetails.mobile && selectedUserDetails.mobile !== "-"
+                        ? selectedUserDetails.mobile
+                        : "Not provided"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Registered On</span>
+                    <span className="font-semibold text-gray-800 mt-0.5 block">
+                      {selectedUserDetails.created_at
+                        ? new Date(selectedUserDetails.created_at).toLocaleDateString("en-IN", {
+                            day: "numeric",
+                            month: "short",
+                            year: "numeric",
+                          })
+                        : "-"}
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Custom Requests</span>
+                    <span className="font-bold text-[#7a5235] text-sm mt-0.5 block">
+                      {selectedUserDetails.total_requests} submitted
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-gray-500 block">Placed Orders</span>
+                    <span className="font-bold text-emerald-700 text-sm mt-0.5 block">
+                      {selectedUserDetails.total_orders} orders
+                    </span>
+                  </div>
+                </div>
+
+                <div className="mt-4 pt-3 border-t border-gray-100 flex items-center justify-between text-[11px] text-gray-500">
+                  <div className="flex items-center gap-1.5 truncate">
+                    <span>UUID:</span>
+                    <code className="bg-[#faf7f2] px-2 py-0.5 rounded border border-[#e7dccd] text-gray-700">
+                      {selectedUserDetails.id}
+                    </code>
+                  </div>
+                  {selectedUserDetails.last_sign_in_at && (
+                    <span>
+                      Last Active: {new Date(selectedUserDetails.last_sign_in_at).toLocaleDateString("en-IN")}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* User's Custom Requests */}
+              {(() => {
+                const userRequests = requests.filter(
+                  (r) =>
+                    (r.user_id && r.user_id === selectedUserDetails.id) ||
+                    (r.email && r.email.toLowerCase() === selectedUserDetails.email.toLowerCase())
+                );
+
+                return (
+                  <div className="bg-white rounded-2xl p-5 border border-[#e7dccd] shadow-xs space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-serif font-bold text-[#3d281c] flex items-center gap-2">
+                        <span>📋</span>
+                        <span>Custom Furniture Requests ({userRequests.length})</span>
+                      </h4>
+                    </div>
+
+                    {userRequests.length === 0 ? (
+                      <div className="py-6 text-center bg-[#faf7f2] rounded-xl border border-dashed border-[#ded5c8]">
+                        <p className="text-xs text-gray-500">No custom furniture requests from this user yet.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                        {userRequests.map((req) => (
+                          <div
+                            key={req.id}
+                            className="bg-[#faf7f2] p-3.5 rounded-xl border border-[#ded5c8] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-[#7a5235]">
+                                  {req.request_id}
+                                </span>
+                                <span className="font-semibold text-gray-900">
+                                  {req.furniture_type}
+                                </span>
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${getStatusClasses(req.status)}`}>
+                                  {req.status}
+                                </span>
+                              </div>
+                              <p className="text-gray-500 text-[11px]">
+                                {[req.length, req.width, req.height].filter(Boolean).join(" × ") || "Standard size"} • {req.preferred_material || "Standard finish"}
+                              </p>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedUserDetails(null);
+                                setActiveTab("requests");
+                              }}
+                              className="text-xs font-semibold text-[#7a5235] hover:text-[#5a3927] hover:underline self-start sm:self-auto shrink-0"
+                            >
+                              Open in Requests →
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+
+              {/* User's Placed Orders */}
+              {(() => {
+                const userOrders = ordersList.filter(
+                  (o) =>
+                    (o.user_id && o.user_id === selectedUserDetails.id) ||
+                    (o.custom_requests?.email &&
+                      o.custom_requests.email.toLowerCase() === selectedUserDetails.email.toLowerCase())
+                );
+
+                return (
+                  <div className="bg-white rounded-2xl p-5 border border-[#e7dccd] shadow-xs space-y-3">
+                    <div className="flex items-center justify-between">
+                      <h4 className="text-sm font-serif font-bold text-[#3d281c] flex items-center gap-2">
+                        <span>📦</span>
+                        <span>Customer Orders ({userOrders.length})</span>
+                      </h4>
+                    </div>
+
+                    {userOrders.length === 0 ? (
+                      <div className="py-6 text-center bg-[#faf7f2] rounded-xl border border-dashed border-[#ded5c8]">
+                        <p className="text-xs text-gray-500">No confirmed orders placed by this user yet.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-2.5 max-h-56 overflow-y-auto pr-1">
+                        {userOrders.map((ord) => (
+                          <div
+                            key={ord.id}
+                            className="bg-[#faf7f2] p-3.5 rounded-xl border border-[#ded5c8] flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+                          >
+                            <div className="space-y-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-mono font-bold text-[#3d281c]">
+                                  {ord.order_number}
+                                </span>
+                                <span className="font-serif font-bold text-[#7a5235]">
+                                  ₹{Number(ord.amount).toLocaleString("en-IN")}
+                                </span>
+                                <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${getOrderStatusBadgeClasses(ord.status)}`}>
+                                  {ord.status}
+                                </span>
+                              </div>
+                              <p className="text-gray-500 text-[11px]">
+                                Placed on {new Date(ord.created_at).toLocaleDateString("en-IN")} • Target: {formatOrderDate(ord.expected_delivery_date)}
+                              </p>
+                            </div>
+
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedUserDetails(null);
+                                setActiveTab("orders");
+                                setSelectedOrderDetails(ord);
+                              }}
+                              className="text-xs font-semibold text-emerald-800 hover:text-emerald-900 hover:underline self-start sm:self-auto shrink-0"
+                            >
+                              Track Fulfillment →
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="border-t border-[#ded5c8] bg-[#fbf9f6] px-6 py-4 flex flex-wrap items-center justify-between gap-3 shrink-0">
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleToggleAdminRole(selectedUserDetails);
+                    setSelectedUserDetails(null);
+                  }}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold transition ${
+                    selectedUserDetails.is_admin
+                      ? "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
+                      : "bg-[#3d281c] text-white hover:bg-[#5a3927]"
+                  }`}
+                >
+                  {selectedUserDetails.is_admin ? "Demote to Customer" : "👑 Grant Administrator Privileges"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => handleDeleteUser(selectedUserDetails)}
+                  disabled={selectedUserDetails.id === currentUserId}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
+                    selectedUserDetails.id === currentUserId
+                      ? "opacity-30 cursor-not-allowed text-gray-400"
+                      : "text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200"
+                  }`}
+                >
+                  Delete User
+                </button>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setSelectedUserDetails(null)}
+                className="px-5 py-2.5 rounded-xl border border-gray-300 bg-white text-xs font-semibold text-gray-700 hover:bg-gray-100 transition"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add / Promote Administrator Modal */}
+      {showAddAdminModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4">
+          <div className="bg-white rounded-3xl border border-[#ded5c8] shadow-2xl max-w-md w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+            <div className="border-b border-[#ded5c8] px-6 py-4 flex items-center justify-between bg-[#faf7f2]">
+              <div className="flex items-center gap-2">
+                <span className="text-xl">👑</span>
+                <h3 className="font-serif font-bold text-lg text-[#3d281c]">
+                  Promote / Add Administrator
+                </h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowAddAdminModal(false);
+                  setAddAdminEmail("");
+                }}
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-800 transition text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleAddAdminByEmail} className="p-6 space-y-4">
+              <p className="text-xs text-gray-600 leading-relaxed">
+                Enter the email address of a customer who has created an account. Granting administrator privileges allows them to review custom inquiries, draft quotations, manage catalogue designs, and adjust fulfillment stages.
+              </p>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                  User Email Address *
+                </label>
+                <input
+                  type="email"
+                  required
+                  value={addAdminEmail}
+                  onChange={(e) => setAddAdminEmail(e.target.value)}
+                  placeholder="e.g. colleague@gavika.com"
+                  className="w-full rounded-xl border border-gray-300 bg-[#faf7f2] px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-[#7a5235] focus:bg-white transition"
+                />
+              </div>
+
+              <div className="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-900 flex items-start gap-2">
+                <span className="text-base shrink-0">ℹ️</span>
+                <span>
+                  The user must already have registered with this email address so their account can be located.
+                </span>
+              </div>
+
+              <div className="pt-2 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowAddAdminModal(false);
+                    setAddAdminEmail("");
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={addAdminLoading || !addAdminEmail.trim()}
+                  className="px-5 py-2.5 rounded-xl bg-[#3d281c] text-white text-xs font-semibold hover:bg-[#5a3927] transition shadow-xs disabled:opacity-50 flex items-center gap-2"
+                >
+                  {addAdminLoading && <span className="animate-spin text-sm">⏳</span>}
+                  <span>Grant Admin Access</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Product Gallery & Details Preview Modal (Matches Furniture Screen) */}
+      {previewProduct && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-2.5 sm:p-6"
+          onClick={() => setPreviewProduct(null)}
+        >
+          <div
+            className="relative w-full max-w-4xl overflow-hidden rounded-2xl sm:rounded-3xl bg-[#1c1917] text-white shadow-2xl flex flex-col max-h-[94vh] sm:max-h-[92vh]"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 sm:px-6 sm:py-4">
+              <div className="min-w-0 pr-3">
+                <div className="flex items-center gap-2">
+                  <span className="rounded-full bg-[#8b6f47]/30 border border-[#8b6f47]/50 px-2.5 py-0.5 text-[10px] sm:text-xs font-medium text-[#d8bd91]">
+                    {previewProduct.product.category}
+                  </span>
+                  <span className="text-[11px] sm:text-xs text-white/50">
+                    Photo {previewProduct.activeIndex + 1} of{" "}
+                    {extractProductImages(previewProduct.product).length || 1}
+                  </span>
+                </div>
+                <h3 className="text-base sm:text-lg font-semibold text-white mt-1 truncate">
+                  {previewProduct.product.name}
+                </h3>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setPreviewProduct(null)}
+                className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 active:bg-white/30 hover:text-white transition"
+                aria-label="Close modal"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Main Image Showcase */}
+            <div className="relative flex-1 min-h-[260px] sm:min-h-[420px] max-h-[58vh] bg-black/40 flex items-center justify-center overflow-hidden">
+              {(() => {
+                const currentModalImg =
+                  extractProductImages(previewProduct.product)[
+                    previewProduct.activeIndex
+                  ] || previewProduct.product.image_url;
+
+                if (!currentModalImg) {
+                  return (
+                    <div className="flex flex-col items-center justify-center p-8 text-white/50 text-center">
+                      <div className="w-16 h-16 rounded-2xl bg-white/10 flex items-center justify-center text-3xl mb-3">
+                        📷
+                      </div>
+                      <p className="text-sm font-semibold text-white/80">No Image Available</p>
+                      <p className="text-xs text-white/40 mt-1">This product has no photo uploaded yet</p>
+                    </div>
+                  );
+                }
+
+                return (
+                  <img
+                    src={currentModalImg}
+                    alt={previewProduct.product.name}
+                    className="max-h-full max-w-full object-contain select-none"
+                    onError={(e) => {
+                      (e.target as HTMLElement).style.display = "none";
+                    }}
+                  />
+                );
+              })()}
+
+              {/* Prev / Next Buttons */}
+              {extractProductImages(previewProduct.product).length > 1 && (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const imgs = extractProductImages(previewProduct.product);
+                      setPreviewProduct((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              activeIndex:
+                                (prev.activeIndex - 1 + imgs.length) %
+                                imgs.length,
+                            }
+                          : null
+                      );
+                    }}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 hover:bg-black/85 text-white backdrop-blur-xs transition active:scale-95 text-xl font-bold shadow-lg"
+                    title="Previous photo"
+                  >
+                    ‹
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const imgs = extractProductImages(previewProduct.product);
+                      setPreviewProduct((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              activeIndex:
+                                (prev.activeIndex + 1) % imgs.length,
+                            }
+                          : null
+                      );
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 hover:bg-black/85 text-white backdrop-blur-xs transition active:scale-95 text-xl font-bold shadow-lg"
+                    title="Next photo"
+                  >
+                    ›
+                  </button>
+                </>
+              )}
+            </div>
+
+            {/* Thumbnails Row */}
+            {extractProductImages(previewProduct.product).length > 1 && (
+              <div className="border-t border-white/10 bg-black/40 px-4 py-2.5 overflow-x-auto scrollbar-none">
+                <div className="flex gap-2">
+                  {extractProductImages(previewProduct.product).map((imgUrl, idx) => {
+                    const isCurrent = idx === previewProduct.activeIndex;
+                    return (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() =>
+                          setPreviewProduct((prev) =>
+                            prev ? { ...prev, activeIndex: idx } : null
+                          )
+                        }
+                        className={`relative h-14 w-16 sm:h-16 sm:w-20 shrink-0 overflow-hidden rounded-lg border-2 transition-all duration-200 ${
+                          isCurrent
+                            ? "border-[#d8bd91] ring-2 ring-[#d8bd91]/50 scale-105"
+                            : "border-white/20 opacity-60 hover:opacity-100"
+                        }`}
+                      >
+                        <img
+                          src={imgUrl}
+                          alt=""
+                          className="h-full w-full object-cover"
+                        />
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Modal Footer with Product Details & Action Buttons */}
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t border-white/10 bg-[#1c1917] px-4 py-3 sm:px-6 sm:py-4">
+              <div className="text-left">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-[10px] sm:text-[11px] uppercase tracking-wider text-[#d8bd91] font-semibold">
+                    Price:
+                  </span>
+                  <span className="text-sm sm:text-base font-bold text-white">
+                    {previewProduct.product.price}
+                  </span>
+                  <span className="text-xs text-white/40 font-mono ml-2">
+                    ID: #{previewProduct.product.id.slice(0, 8)}
+                  </span>
+                </div>
+                {previewProduct.product.description && (
+                  <p className="text-[11px] sm:text-xs text-white/70 line-clamp-2 max-w-lg mt-0.5">
+                    {previewProduct.product.description}
+                  </p>
+                )}
+              </div>
+
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prod = previewProduct.product;
+                    setPreviewProduct(null);
+                    openEditProduct(prod);
+                  }}
+                  className="rounded-xl border border-[#d8bd91]/40 bg-[#8b6f47]/30 hover:bg-[#8b6f47]/50 px-4 py-2 text-xs font-semibold text-[#d8bd91] transition flex items-center gap-1.5"
+                >
+                  <span>✏️</span>
+                  <span>Edit</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    const prod = previewProduct.product;
+                    setPreviewProduct(null);
+                    handleDeleteProduct(prod);
+                  }}
+                  className="rounded-xl border border-red-500/40 bg-red-950/40 hover:bg-red-900/60 px-4 py-2 text-xs font-semibold text-red-300 transition flex items-center gap-1.5"
+                >
+                  <span>🗑️</span>
+                  <span>Delete</span>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setPreviewProduct(null)}
+                  className="rounded-xl border border-white/20 px-4 py-2 text-xs font-semibold text-white/80 hover:bg-white/10 transition"
+                >
+                  Close
+                </button>
+              </div>
             </div>
           </div>
         </div>

@@ -2,6 +2,7 @@
 export const dynamic = "force-dynamic";
 import { locationData } from "@/data/locations";
 import { products } from "@/data/products";
+import { extractProductImages } from "@/utils/product-images";
 import { supabase } from "@/utils/supabase/client";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, Suspense, useEffect, useState } from "react";
@@ -26,9 +27,11 @@ function CustomFurnitureContent() {
     description?: string;
     price?: string;
     image?: string;
+    images?: string[];
   };
 
   const [selectedProduct, setSelectedProduct] = useState<SelectedDesignType | null>(null);
+  const [selectedDesignImageIndex, setSelectedDesignImageIndex] = useState(0);
 
   useEffect(() => {
     if (!selectedDesign) return;
@@ -36,7 +39,12 @@ function CustomFurnitureContent() {
     // Check static list first
     const staticFound = products.find((p) => p.id === selectedDesign);
     if (staticFound) {
-      setSelectedProduct(staticFound);
+      const imgs = (staticFound as any).images || (staticFound.image ? [staticFound.image] : []);
+      setSelectedProduct({
+        ...staticFound,
+        images: imgs,
+      });
+      setSelectedDesignImageIndex(0);
       return;
     }
 
@@ -48,14 +56,17 @@ function CustomFurnitureContent() {
       .maybeSingle()
       .then(({ data }) => {
         if (data) {
+          const imgs = extractProductImages(data);
           setSelectedProduct({
             id: data.id,
             name: data.name,
             category: data.category,
             description: data.description || "",
             price: data.price || "Custom Quote",
-            image: data.image_url,
+            image: imgs[0] || data.image_url || "",
+            images: imgs.length > 0 ? imgs : (data.image_url ? [data.image_url] : []),
           });
+          setSelectedDesignImageIndex(0);
         }
       });
   }, [selectedDesign]);
@@ -82,6 +93,71 @@ function CustomFurnitureContent() {
   const [customCity, setCustomCity] = useState("");
   const [streetAddress, setStreetAddress] = useState("");
   const [pincode, setPincode] = useState("");
+
+  // Controlled form inputs with validation
+  const [fullName, setFullName] = useState("");
+  const [mobile, setMobile] = useState("");
+  const [email, setEmail] = useState("");
+  const [length, setLength] = useState("");
+  const [width, setWidth] = useState("");
+  const [height, setHeight] = useState("");
+
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
+  const [touchedFields, setTouchedFields] = useState<Record<string, boolean>>({});
+
+  const validateField = (field: string, val: string): string => {
+    switch (field) {
+      case "full_name": {
+        const trimmed = val.trim();
+        if (!trimmed) return "Full Name is required.";
+        if (trimmed.length < 2) return "Full Name must be at least 2 characters.";
+        if (!/^[a-zA-Z\s.'-]+$/.test(trimmed)) {
+          return "Full Name should contain letters and spaces only.";
+        }
+        return "";
+      }
+      case "mobile": {
+        const clean = val.replace(/\D/g, "");
+        if (!clean) return "Mobile number is required.";
+        if (clean.length !== 10) return "Please enter a valid 10-digit mobile number.";
+        if (!/^[6-9]/.test(clean)) return "Mobile number must start with 6, 7, 8, or 9.";
+        return "";
+      }
+      case "email": {
+        const trimmed = val.trim();
+        if (trimmed && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) {
+          return "Please enter a valid email address (e.g. name@domain.com).";
+        }
+        return "";
+      }
+      case "length":
+      case "width":
+      case "height": {
+        const trimmed = val.trim();
+        if (!trimmed) return ""; // Optional dimension
+        const match = trimmed.match(/^(\d+(\.\d+)?)\s*(ft|feet|in|inch|inches|cm|m|mm|'|")?$/i);
+        if (!match) {
+          const label = field.charAt(0).toUpperCase() + field.slice(1);
+          return `${label} must be a positive number or measurement (e.g. 6 ft, 72 in, 180 cm).`;
+        }
+        const num = parseFloat(match[1]);
+        if (num <= 0) {
+          const label = field.charAt(0).toUpperCase() + field.slice(1);
+          return `${label} must be greater than 0.`;
+        }
+        return "";
+      }
+      case "pincode": {
+        const trimmed = val.trim();
+        if (trimmed && !/^[1-9]\d{5}$/.test(trimmed)) {
+          return "PIN Code must be a valid 6-digit Indian postal code (e.g. 313001).";
+        }
+        return "";
+      }
+      default:
+        return "";
+    }
+  };
 
   const countries = Object.keys(locationData);
   const availableStates =
@@ -143,7 +219,17 @@ function CustomFurnitureContent() {
 
       const user = session.user;
       setUserId(user.id);
-      setUserEmail(user.email || "");
+      const userEm = user.email || "";
+      setUserEmail(userEm);
+      setEmail((prev) => prev || userEm);
+
+      const metaName = (user.user_metadata as any)?.full_name;
+      if (metaName) setFullName((prev) => prev || metaName);
+
+      const metaMobile = (user.user_metadata as any)?.mobile || user.phone;
+      if (metaMobile) {
+        setMobile((prev) => prev || String(metaMobile).replace(/\D/g, "").slice(0, 10));
+      }
 
       supabase
         .from("admin_users")
@@ -172,8 +258,47 @@ function CustomFurnitureContent() {
       return;
     }
 
+    // Comprehensive field validation
+    const errors: Record<string, string> = {};
+    const nameErr = validateField("full_name", fullName);
+    if (nameErr) errors.full_name = nameErr;
+
+    const mobErr = validateField("mobile", mobile);
+    if (mobErr) errors.mobile = mobErr;
+
+    const emailErr = validateField("email", email);
+    if (emailErr) errors.email = emailErr;
+
+    const lenErr = validateField("length", length);
+    if (lenErr) errors.length = lenErr;
+
+    const widthErr = validateField("width", width);
+    if (widthErr) errors.width = widthErr;
+
+    const heightErr = validateField("height", height);
+    if (heightErr) errors.height = heightErr;
+
+    const pinErr = validateField("pincode", pincode);
+    if (pinErr) errors.pincode = pinErr;
+
     if (!selectedCountry || !selectedState || !effectiveCity) {
-      setError("Please select Country, State, and City for delivery location.");
+      errors.delivery_location = "Please select Country, State, and City for delivery location.";
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setFieldErrors(errors);
+      setTouchedFields({
+        full_name: true,
+        mobile: true,
+        email: true,
+        length: true,
+        width: true,
+        height: true,
+        pincode: true,
+        delivery_location: true,
+      });
+      setError("Please correct the highlighted field errors before submitting.");
+      window.scrollTo({ top: 350, behavior: "smooth" });
       return;
     }
 
@@ -256,16 +381,16 @@ function CustomFurnitureContent() {
         catalogue_design_id: selectedProduct?.id || null,
         catalogue_design_name: selectedProduct?.name || null,
         catalogue_design_image_url: selectedProduct?.image || null,
-        full_name: String(formData.get("full_name") || "").trim(),
-        mobile: String(formData.get("mobile") || "").trim(),
-        email: String(formData.get("email") || "").trim() || userEmail,
+        full_name: fullName.trim(),
+        mobile: mobile.trim(),
+        email: email.trim() || userEmail,
         furniture_type: String(
           formData.get("furniture_type") || ""
         ).trim(),
         room_usage: String(formData.get("room_usage") || "").trim(),
-        length: String(formData.get("length") || "").trim(),
-        width: String(formData.get("width") || "").trim(),
-        height: String(formData.get("height") || "").trim(),
+        length: length.trim() || null,
+        width: width.trim() || null,
+        height: height.trim() || null,
         preferred_material: String(
           formData.get("preferred_material") || ""
         ).trim(),
@@ -298,6 +423,11 @@ function CustomFurnitureContent() {
 
       form.reset();
 
+      setLength("");
+      setWidth("");
+      setHeight("");
+      setFieldErrors({});
+      setTouchedFields({});
       setSelectedCountry("India");
       setSelectedState("");
       setSelectedCity("");
@@ -492,18 +622,50 @@ function CustomFurnitureContent() {
         )}
       </header>
       {selectedProduct && (
-        <div className="max-w-4xl mx-auto px-6 pt-8">
-          <div className="rounded-2xl border border-[#ded5c8] bg-[#f8f5ef] p-5 shadow-sm">
-            <p className="mb-3 text-sm font-medium text-[#8b6f47]">
-              Selected Furniture Design
-            </p>
+        <div className="max-w-4xl mx-auto px-4 sm:px-6 pt-6 sm:pt-8">
+          <div className="rounded-2xl border border-[#ded5c8] bg-[#f8f5ef] p-4 sm:p-5 shadow-sm">
+            <div className="flex items-center justify-between mb-3 gap-2">
+              <p className="text-xs sm:text-sm font-medium text-[#8b6f47]">
+                Selected Furniture Design
+              </p>
+              {(selectedProduct.images?.length || 0) > 1 && (
+                <span className="text-[11px] sm:text-xs font-semibold text-[#8b6f47] bg-[#ede5d8] px-2.5 py-0.5 rounded-full shrink-0">
+                  📷 {selectedDesignImageIndex + 1} of {selectedProduct.images?.length}
+                </span>
+              )}
+            </div>
 
-            <div className="flex flex-col gap-5 sm:flex-row">
-              <img
-                src={selectedProduct.image}
-                alt={selectedProduct.name}
-                className="h-40 w-full rounded-xl object-cover sm:w-52"
-              />
+            <div className="flex flex-col gap-4 sm:gap-5 sm:flex-row">
+              <div className="flex flex-col gap-2 sm:w-56 shrink-0">
+                <img
+                  src={
+                    selectedProduct.images?.[selectedDesignImageIndex] ||
+                    selectedProduct.image
+                  }
+                  alt={selectedProduct.name}
+                  className="h-48 sm:h-44 w-full rounded-xl object-cover shadow-xs border border-[#ded5c8]"
+                />
+
+                {(selectedProduct.images?.length || 0) > 1 && (
+                  <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-none">
+                    {selectedProduct.images?.map((imgUrl, idx) => (
+                      <button
+                        key={idx}
+                        type="button"
+                        onClick={() => setSelectedDesignImageIndex(idx)}
+                        className={`relative h-12 w-12 sm:h-11 sm:w-11 shrink-0 overflow-hidden rounded-lg border-2 transition active:scale-95 ${
+                          idx === selectedDesignImageIndex
+                            ? "border-[#8b6f47] ring-1 ring-[#8b6f47]"
+                            : "border-transparent opacity-60 hover:opacity-100"
+                        }`}
+                        title={`View photo ${idx + 1}`}
+                      >
+                        <img src={imgUrl} alt="" className="h-full w-full object-cover" />
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div>
                 <h2 className="text-2xl font-serif font-semibold text-[#29251f]">
@@ -597,6 +759,7 @@ function CustomFurnitureContent() {
             </h2>
 
             <div className="grid md:grid-cols-2 gap-5">
+              {/* Full Name */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Full Name *
@@ -607,26 +770,82 @@ function CustomFurnitureContent() {
                   type="text"
                   required
                   autoComplete="name"
+                  value={fullName}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setFullName(val);
+                    if (touchedFields.full_name) {
+                      setFieldErrors((prev) => ({ ...prev, full_name: validateField("full_name", val) }));
+                    }
+                  }}
+                  onBlur={() => {
+                    setTouchedFields((prev) => ({ ...prev, full_name: true }));
+                    setFieldErrors((prev) => ({ ...prev, full_name: validateField("full_name", fullName) }));
+                  }}
                   placeholder="Enter your full name"
-                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className={`w-full rounded-lg border px-4 py-3 outline-none transition ${
+                    fieldErrors.full_name
+                      ? "border-red-400 bg-red-50/20 text-gray-900 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                      : "border-gray-300 bg-white text-gray-900 focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  }`}
                 />
+                {fieldErrors.full_name && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.full_name}</span>
+                  </p>
+                )}
               </div>
 
+              {/* Mobile Number */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Mobile Number *
                 </label>
 
-                <input
-                  name="mobile"
-                  type="tel"
-                  required
-                  autoComplete="tel"
-                  placeholder="Enter mobile number"
-                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
-                />
+                <div className="relative">
+                  <div className="absolute inset-y-0 left-0 pl-3.5 flex items-center pointer-events-none text-xs font-semibold text-gray-500">
+                    +91
+                  </div>
+                  <input
+                    name="mobile"
+                    type="tel"
+                    required
+                    maxLength={10}
+                    autoComplete="tel"
+                    value={mobile}
+                    onChange={(e) => {
+                      const digits = e.target.value.replace(/\D/g, "").slice(0, 10);
+                      setMobile(digits);
+                      if (touchedFields.mobile) {
+                        setFieldErrors((prev) => ({ ...prev, mobile: validateField("mobile", digits) }));
+                      }
+                    }}
+                    onBlur={() => {
+                      setTouchedFields((prev) => ({ ...prev, mobile: true }));
+                      setFieldErrors((prev) => ({ ...prev, mobile: validateField("mobile", mobile) }));
+                    }}
+                    placeholder="9876543210"
+                    className={`w-full rounded-lg border pl-12 pr-4 py-3 outline-none transition tracking-wide ${
+                      fieldErrors.mobile
+                        ? "border-red-400 bg-red-50/20 text-gray-900 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                        : "border-gray-300 bg-white text-gray-900 focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                    }`}
+                  />
+                </div>
+                {fieldErrors.mobile ? (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.mobile}</span>
+                  </p>
+                ) : (
+                  <p className="text-[11px] text-gray-400 mt-1">
+                    10-digit mobile number for order updates
+                  </p>
+                )}
               </div>
 
+              {/* Email */}
               <div className="md:col-span-2">
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Email
@@ -635,11 +854,32 @@ function CustomFurnitureContent() {
                 <input
                   name="email"
                   type="email"
-                  defaultValue={userEmail}
+                  value={email}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setEmail(val);
+                    if (touchedFields.email) {
+                      setFieldErrors((prev) => ({ ...prev, email: validateField("email", val) }));
+                    }
+                  }}
+                  onBlur={() => {
+                    setTouchedFields((prev) => ({ ...prev, email: true }));
+                    setFieldErrors((prev) => ({ ...prev, email: validateField("email", email) }));
+                  }}
                   autoComplete="email"
-                  placeholder="Enter email address"
-                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  placeholder="Enter email address (e.g. name@gmail.com)"
+                  className={`w-full rounded-lg border px-4 py-3 outline-none transition ${
+                    fieldErrors.email
+                      ? "border-red-400 bg-red-50/20 text-gray-900 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                      : "border-gray-300 bg-white text-gray-900 focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  }`}
                 />
+                {fieldErrors.email && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.email}</span>
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -698,11 +938,12 @@ function CustomFurnitureContent() {
             </h2>
 
             <p className="text-sm text-gray-500 mb-4">
-              Enter approximate dimensions in feet. You can discuss final
+              Enter approximate dimensions in feet or inches (e.g. 6 ft, 72 in, 180 cm). You can discuss final
               measurements with our team.
             </p>
 
             <div className="grid sm:grid-cols-3 gap-5">
+              {/* Length */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Length
@@ -711,11 +952,34 @@ function CustomFurnitureContent() {
                 <input
                   name="length"
                   type="text"
+                  value={length}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setLength(val);
+                    if (touchedFields.length) {
+                      setFieldErrors((prev) => ({ ...prev, length: validateField("length", val) }));
+                    }
+                  }}
+                  onBlur={() => {
+                    setTouchedFields((prev) => ({ ...prev, length: true }));
+                    setFieldErrors((prev) => ({ ...prev, length: validateField("length", length) }));
+                  }}
                   placeholder="Example: 6 ft"
-                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className={`w-full rounded-lg border px-4 py-3 outline-none transition ${
+                    fieldErrors.length
+                      ? "border-red-400 bg-red-50/20 text-gray-900 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                      : "border-gray-300 bg-white text-gray-900 focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  }`}
                 />
+                {fieldErrors.length && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.length}</span>
+                  </p>
+                )}
               </div>
 
+              {/* Width */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Width
@@ -724,11 +988,34 @@ function CustomFurnitureContent() {
                 <input
                   name="width"
                   type="text"
+                  value={width}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setWidth(val);
+                    if (touchedFields.width) {
+                      setFieldErrors((prev) => ({ ...prev, width: validateField("width", val) }));
+                    }
+                  }}
+                  onBlur={() => {
+                    setTouchedFields((prev) => ({ ...prev, width: true }));
+                    setFieldErrors((prev) => ({ ...prev, width: validateField("width", width) }));
+                  }}
                   placeholder="Example: 3 ft"
-                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className={`w-full rounded-lg border px-4 py-3 outline-none transition ${
+                    fieldErrors.width
+                      ? "border-red-400 bg-red-50/20 text-gray-900 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                      : "border-gray-300 bg-white text-gray-900 focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  }`}
                 />
+                {fieldErrors.width && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.width}</span>
+                  </p>
+                )}
               </div>
 
+              {/* Height */}
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-2">
                   Height
@@ -737,9 +1024,31 @@ function CustomFurnitureContent() {
                 <input
                   name="height"
                   type="text"
+                  value={height}
+                  onChange={(e) => {
+                    const val = e.target.value;
+                    setHeight(val);
+                    if (touchedFields.height) {
+                      setFieldErrors((prev) => ({ ...prev, height: validateField("height", val) }));
+                    }
+                  }}
+                  onBlur={() => {
+                    setTouchedFields((prev) => ({ ...prev, height: true }));
+                    setFieldErrors((prev) => ({ ...prev, height: validateField("height", height) }));
+                  }}
                   placeholder="Example: 3 ft"
-                  className="w-full rounded-lg border border-gray-300 bg-white text-gray-900 placeholder:text-gray-400 px-4 py-3 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className={`w-full rounded-lg border px-4 py-3 outline-none transition ${
+                    fieldErrors.height
+                      ? "border-red-400 bg-red-50/20 text-gray-900 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                      : "border-gray-300 bg-white text-gray-900 focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  }`}
                 />
+                {fieldErrors.height && (
+                  <p className="text-xs text-red-600 mt-1.5 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.height}</span>
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -927,13 +1236,40 @@ function CustomFurnitureContent() {
                   type="text"
                   name="pincode"
                   value={pincode}
-                  onChange={(e) => setPincode(e.target.value)}
+                  maxLength={6}
+                  onChange={(e) => {
+                    const digits = e.target.value.replace(/\D/g, "").slice(0, 6);
+                    setPincode(digits);
+                    if (touchedFields.pincode) {
+                      setFieldErrors((prev) => ({ ...prev, pincode: validateField("pincode", digits) }));
+                    }
+                  }}
+                  onBlur={() => {
+                    setTouchedFields((prev) => ({ ...prev, pincode: true }));
+                    setFieldErrors((prev) => ({ ...prev, pincode: validateField("pincode", pincode) }));
+                  }}
                   placeholder="e.g. 313001"
-                  maxLength={10}
-                  className="w-full rounded-lg border border-gray-300 bg-white px-3.5 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  className={`w-full rounded-lg border px-3.5 py-2.5 text-sm text-gray-900 outline-none transition ${
+                    fieldErrors.pincode
+                      ? "border-red-400 bg-red-50/20 focus:border-red-500 focus:ring-1 focus:ring-red-500"
+                      : "border-gray-300 bg-white focus:border-[#7a5235] focus:ring-1 focus:ring-[#7a5235]"
+                  }`}
                 />
+                {fieldErrors.pincode && (
+                  <p className="text-xs text-red-600 mt-1 flex items-center gap-1 font-medium">
+                    <span>⚠️</span>
+                    <span>{fieldErrors.pincode}</span>
+                  </p>
+                )}
               </div>
             </div>
+
+            {fieldErrors.delivery_location && (
+              <p className="text-xs text-red-600 flex items-center gap-1 font-medium bg-red-50 p-2.5 rounded-lg border border-red-200">
+                <span>⚠️</span>
+                <span>{fieldErrors.delivery_location}</span>
+              </p>
+            )}
 
             {/* Hidden field for formData submission */}
             <input
