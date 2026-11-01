@@ -296,7 +296,7 @@ export default function LoginPage() {
           {/* Logo */}
           <div className="text-center mb-8">
             <img
-              src="/gavika-logo.png"
+              src="/Gavika-new-logo.png"
               alt="Gavika Furnitech"
               className="h-20 w-20 object-contain mx-auto mb-4"
             />
