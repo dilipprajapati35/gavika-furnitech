@@ -1,10 +1,11 @@
 "use client";
 
-import { extractProductImages } from "@/utils/product-images";
+import { extractProductImages, formatPrice } from "@/utils/product-images";
 import { locationData } from "@/data/locations";
 import { supabase } from "@/utils/supabase/client";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
+import ProductCard from "@/components/ProductCard";
 
 type Product = {
   id: string;
@@ -77,11 +78,32 @@ export default function FurniturePage() {
     amount: number;
   } | null>(null);
 
-  function handleBuyNow(product: Product) {
+  async function handleBuyNow(product: Product) {
     const cleanNum = product.price.replace(/[^\d.]/g, "");
     if (!cleanNum || isNaN(Number(cleanNum)) || Number(cleanNum) <= 0) {
       alert(
         `"${product.name}" pricing is upon custom quotation. Please click "Custom" to submit your specifications.`
+      );
+      return;
+    }
+
+    // Require user login before purchasing
+    let currentUser = sessionUser;
+    if (!currentUser) {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (session?.user) {
+        currentUser = session.user;
+        setSessionUser(session.user);
+        setUserId(session.user.id);
+      }
+    }
+
+    if (!currentUser) {
+      const returnUrl = `/furniture?buy=${encodeURIComponent(product.id)}`;
+      router.push(
+        `/login?redirect=${encodeURIComponent(returnUrl)}&reason=buy&productName=${encodeURIComponent(product.name)}`
       );
       return;
     }
@@ -92,13 +114,13 @@ export default function FurniturePage() {
 
     setCheckoutCustomer((prev) => ({
       name:
-        (sessionUser?.user_metadata as any)?.full_name ||
+        (currentUser?.user_metadata as any)?.full_name ||
         prev.name ||
         "",
-      email: sessionUser?.email || prev.email || "",
+      email: currentUser?.email || prev.email || "",
       mobile:
-        (sessionUser?.user_metadata as any)?.mobile ||
-        sessionUser?.phone ||
+        (currentUser?.user_metadata as any)?.mobile ||
+        currentUser?.phone ||
         prev.mobile ||
         "",
       country: prev.country || "India",
@@ -131,7 +153,12 @@ export default function FurniturePage() {
 
     const errors: Record<string, string> = {};
     if (!checkoutCustomer.name.trim()) errors.name = "Full Name is required.";
-    const cleanPhone = checkoutCustomer.mobile.replace(/\D/g, "");
+    let cleanPhone = checkoutCustomer.mobile.replace(/\D/g, "");
+    if (cleanPhone.startsWith("91") && cleanPhone.length > 10) {
+      cleanPhone = cleanPhone.slice(2);
+    } else if (cleanPhone.startsWith("0") && cleanPhone.length > 10) {
+      cleanPhone = cleanPhone.slice(1);
+    }
     if (!cleanPhone || cleanPhone.length !== 10) {
       errors.mobile = "Please enter a valid 10-digit mobile number.";
     }
@@ -172,6 +199,7 @@ export default function FurniturePage() {
     try {
       const cleanNum = checkoutProduct.price.replace(/[^\d.]/g, "");
       const amount = Number(cleanNum);
+      const amountInPaise = Math.round(amount * 100);
 
       const scriptLoaded = await loadRazorpayScript();
       if (!scriptLoaded) {
@@ -190,11 +218,12 @@ export default function FurniturePage() {
         .filter(Boolean)
         .join(", ");
 
-      const res = await fetch("/api/razorpay/create-order", {
+      const res = await fetch("/api/create-order", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          amount,
+          amount: amountInPaise,
+          currency: "INR",
           receipt: `rcpt_${checkoutProduct.id.slice(0, 8)}_${Date.now()}`,
           notes: {
             productId: checkoutProduct.id,
@@ -210,25 +239,19 @@ export default function FurniturePage() {
       const orderData = await res.json();
 
       if (!res.ok || !orderData.success) {
-        if (orderData.needsConfig) {
-          setCheckoutError(
-            "Razorpay API Keys are not configured in .env! Please add NEXT_PUBLIC_RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to your environment variables."
-          );
-        } else {
-          setCheckoutError(orderData.error || "Failed to create payment order with Razorpay.");
-        }
+        setCheckoutError(orderData.error || "Failed to create payment order with Razorpay.");
         setCheckoutLoading(false);
         return;
       }
 
       const options = {
-        key: orderData.keyId,
+        key: orderData.key_id || orderData.keyId || process.env.NEXT_PUBLIC_RAZORPAY_KEY_ID,
         amount: orderData.amount,
         currency: orderData.currency || "INR",
         name: "Gavika Furnitech",
         description: `Order: ${checkoutProduct.name}`,
         image: "/Gavika-new-logo.png",
-        order_id: orderData.orderId,
+        order_id: orderData.order_id || orderData.orderId,
         prefill: {
           name: checkoutCustomer.name,
           email: checkoutCustomer.email,
@@ -239,18 +262,32 @@ export default function FurniturePage() {
         },
         handler: async function (response: any) {
           try {
-            const verifyRes = await fetch("/api/razorpay/verify-payment", {
+            const {
+              data: { session },
+            } = await supabase.auth.getSession();
+            const currentUserId = session?.user?.id || userId || sessionUser?.id || null;
+            const userAccessToken = session?.access_token || null;
+
+            const verifyRes = await fetch("/api/verify-payment", {
               method: "POST",
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({
+                order_id: response.razorpay_order_id,
+                payment_id: response.razorpay_payment_id,
+                signature: response.razorpay_signature,
                 razorpay_order_id: response.razorpay_order_id,
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
+                access_token: userAccessToken,
                 orderDetails: {
                   product_id: checkoutProduct.id,
                   product_name: checkoutProduct.name,
+                  product_image:
+                    checkoutProduct.images?.[0] ||
+                    checkoutProduct.image ||
+                    null,
                   amount,
-                  user_id: userId || null,
+                  user_id: currentUserId,
                   delivery_address: fullDeliveryAddress,
                   customer_name: checkoutCustomer.name,
                   customer_mobile: cleanPhone,
@@ -262,9 +299,56 @@ export default function FurniturePage() {
             const verifyData = await verifyRes.json();
 
             if (verifyRes.ok && verifyData.success) {
+              const finalOrderNumber = verifyData.orderNumber;
+
+              // Client-side confirmation: make sure order and custom_requests exist under this user's account
+              if (currentUserId) {
+                try {
+                  const { data: existingOrd } = await supabase
+                    .from("orders")
+                    .select("id")
+                    .eq("order_number", finalOrderNumber)
+                    .maybeSingle();
+
+                  if (!existingOrd) {
+                    const reqNumber = `REQ-${Date.now().toString().slice(-6)}`;
+                    const { data: clientReq } = await supabase
+                      .from("custom_requests")
+                      .insert({
+                        request_id: reqNumber,
+                        user_id: currentUserId,
+                        full_name: checkoutCustomer.name,
+                        mobile: cleanPhone,
+                        email: checkoutCustomer.email,
+                        furniture_type: checkoutProduct.name,
+                        catalogue_design_name: checkoutProduct.name,
+                        catalogue_design_id: checkoutProduct.id,
+                        catalogue_design_image_url:
+                          checkoutProduct.images?.[0] || checkoutProduct.image || null,
+                        delivery_location: fullDeliveryAddress,
+                        requirement: `Direct online purchase via Razorpay (Payment: ${response.razorpay_payment_id})`,
+                        status: "Order Confirmed",
+                      })
+                      .select("id")
+                      .maybeSingle();
+
+                    await supabase.from("orders").insert({
+                      order_number: finalOrderNumber,
+                      user_id: currentUserId,
+                      request_id: clientReq?.id || null,
+                      amount,
+                      status: "Confirmed",
+                      delivery_address: fullDeliveryAddress,
+                    });
+                  }
+                } catch (clientSyncErr) {
+                  console.warn("Client-side order sync note:", clientSyncErr);
+                }
+              }
+
               setCheckoutProduct(null);
               setPaymentSuccess({
-                orderNumber: verifyData.orderNumber,
+                orderNumber: finalOrderNumber,
                 paymentId: response.razorpay_payment_id,
                 productName: checkoutProduct.name,
                 amount,
@@ -413,6 +497,20 @@ export default function FurniturePage() {
     loadData();
   }, []);
 
+  // Auto-open checkout modal if returning from login with ?buy=<productId>
+  useEffect(() => {
+    if (typeof window === "undefined" || !productsList.length || !sessionUser) return;
+    const params = new URLSearchParams(window.location.search);
+    const buyProductId = params.get("buy");
+    if (!buyProductId) return;
+
+    const targetProduct = productsList.find((p) => p.id === buyProductId);
+    if (targetProduct) {
+      handleBuyNow(targetProduct);
+      window.history.replaceState({}, "", window.location.pathname);
+    }
+  }, [productsList, sessionUser]);
+
   const filteredProducts =
     selectedCategory === "All"
       ? productsList
@@ -478,7 +576,7 @@ export default function FurniturePage() {
                   type="button"
                   onClick={async () => {
                     await supabase.auth.signOut();
-                    router.replace("/login");
+                    router.replace("/login?logged_out=true");
                   }}
                   className="text-xs text-gray-400 hover:text-red-600 transition"
                 >
@@ -558,7 +656,7 @@ export default function FurniturePage() {
                     type="button"
                     onClick={async () => {
                       await supabase.auth.signOut();
-                      router.replace("/login");
+                      router.replace("/login?logged_out=true");
                     }}
                     className="text-left text-xs text-red-600 hover:underline"
                   >
@@ -600,8 +698,8 @@ export default function FurniturePage() {
       </section>
 
       {/* Categories */}
-      <section className="mx-auto max-w-7xl px-6">
-        <div className="flex flex-wrap items-center gap-3 border-b border-[#ded5c8] pb-6">
+      <section className="mx-auto max-w-7xl px-4 sm:px-6">
+        <div className="flex items-center gap-2.5 border-b border-[#ded5c8] pb-4 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
           {categories.map((category) => {
             const count =
               category === "All"
@@ -618,14 +716,14 @@ export default function FurniturePage() {
               <button
                 key={category}
                 onClick={() => setSelectedCategory(category)}
-                className={`flex items-center gap-2 px-5 py-2.5 rounded-lg font-medium text-sm transition ${isSelected
+                className={`flex items-center gap-2 px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${isSelected
                     ? "bg-[#3d281c] text-white shadow-sm"
                     : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
                   }`}
               >
                 <span>{category}</span>
                 <span
-                  className={`rounded-full px-2 py-0.5 text-xs font-semibold ${isSelected
+                  className={`rounded-full px-2 py-0.5 text-[10px] sm:text-xs font-semibold ${isSelected
                       ? "bg-[#7a5235] text-white"
                       : "bg-[#f5efe6] text-[#7a5235]"
                     }`}
@@ -688,167 +786,16 @@ export default function FurniturePage() {
           </div>
         ) : (
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredProducts.map((product) => {
-              const images = product.images && product.images.length > 0 ? product.images : [product.image];
-              const activeIndex = (cardActiveIndices[product.id] || 0) % images.length;
-              const currentImage = images[activeIndex] || product.image;
-              const hasMultiple = images.length > 1;
-
-              return (
-                <article
-                  key={product.id || product.name}
-                  className="group flex flex-col justify-between overflow-hidden rounded-2xl border border-[#e2dbcf] bg-white shadow-sm transition hover:-translate-y-1 hover:shadow-xl"
-                >
-                  <div>
-                    {/* Image with multi-image carousel, swipe & tap to open */}
-                    <div
-                      onClick={() => setGalleryProduct({ product, activeIndex })}
-                      onTouchStart={(e) => {
-                        touchCardStartRef.current = {
-                          id: product.id,
-                          x: e.touches[0].clientX,
-                          y: e.touches[0].clientY,
-                        };
-                      }}
-                      onTouchEnd={(e) => {
-                        if (!touchCardStartRef.current || touchCardStartRef.current.id !== product.id) return;
-                        const diffX = touchCardStartRef.current.x - e.changedTouches[0].clientX;
-                        const diffY = touchCardStartRef.current.y - e.changedTouches[0].clientY;
-                        if (Math.abs(diffX) > 30 && Math.abs(diffX) > Math.abs(diffY)) {
-                          if (diffX > 0) {
-                            setCardActiveIndices((prev) => ({
-                              ...prev,
-                              [product.id]: (activeIndex + 1) % images.length,
-                            }));
-                          } else {
-                            setCardActiveIndices((prev) => ({
-                              ...prev,
-                              [product.id]: (activeIndex - 1 + images.length) % images.length,
-                            }));
-                          }
-                        }
-                        touchCardStartRef.current = null;
-                      }}
-                      className="relative aspect-[4/3] overflow-hidden bg-[#eee8de] cursor-pointer group/img select-none touch-pan-y"
-                    >
-                      <img
-                        src={currentImage}
-                        alt={`${product.name} (Photo ${activeIndex + 1})`}
-                        className="h-full w-full object-cover transition duration-500 group-hover:scale-105"
-                      />
-
-                      {/* Category tag */}
-                      <div className="absolute left-3 top-3 rounded-full bg-white/95 backdrop-blur-xs px-2.5 py-0.5 sm:px-3 sm:py-1 text-[11px] sm:text-xs font-semibold text-[#6f5635] shadow-xs z-10">
-                        {product.category}
-                      </div>
-
-                      {/* Multi-image count pill */}
-                      {hasMultiple && (
-                        <div className="absolute right-3 top-3 flex items-center gap-1 rounded-full bg-black/75 px-2 py-0.5 sm:px-2.5 sm:py-1 text-[11px] sm:text-xs font-medium text-white backdrop-blur-xs shadow-xs z-10">
-                          <span>📷</span>
-                          <span>{activeIndex + 1}/{images.length}</span>
-                        </div>
-                      )}
-
-                      {/* Quick view overlay icon on hover */}
-                      <div className="absolute inset-0 hidden sm:flex items-center justify-center bg-black/20 opacity-0 transition-opacity duration-200 group-hover/img:opacity-100 pointer-events-none">
-                        <span className="rounded-full bg-white/90 backdrop-blur-xs px-3 py-1.5 text-xs font-semibold text-[#29251f] shadow-md flex items-center gap-1.5">
-                          🔍 Click to view {images.length > 1 ? `all ${images.length} photos` : "full photo"}
-                        </span>
-                      </div>
-
-                      {/* Prev / Next buttons on card (visible on mobile touch, hover on desktop) */}
-                      {hasMultiple && (
-                        <>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCardActiveIndices((prev) => ({
-                                ...prev,
-                                [product.id]: (activeIndex - 1 + images.length) % images.length,
-                              }));
-                            }}
-                            className="absolute left-2 top-1/2 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-[#29251f] shadow-md opacity-90 sm:opacity-0 sm:group-hover:opacity-100 transition hover:bg-white hover:scale-110 active:scale-90 text-lg font-bold z-20"
-                            title="Previous photo"
-                            aria-label="Previous photo"
-                          >
-                            ‹
-                          </button>
-                          <button
-                            type="button"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              setCardActiveIndices((prev) => ({
-                                ...prev,
-                                [product.id]: (activeIndex + 1) % images.length,
-                              }));
-                            }}
-                            className="absolute right-2 top-1/2 -translate-y-1/2 flex h-8 w-8 items-center justify-center rounded-full bg-white/95 text-[#29251f] shadow-md opacity-90 sm:opacity-0 sm:group-hover:opacity-100 transition hover:bg-white hover:scale-110 active:scale-90 text-lg font-bold z-20"
-                            title="Next photo"
-                            aria-label="Next photo"
-                          >
-                            ›
-                          </button>
-
-                          {/* Pagination indicator dots */}
-                          <div className="absolute bottom-2.5 inset-x-0 flex justify-center gap-1.5 z-10 pointer-events-none">
-                            {images.map((_, dotIdx) => (
-                              <span
-                                key={dotIdx}
-                                className={`h-1.5 rounded-full transition-all duration-300 ${
-                                  dotIdx === activeIndex
-                                    ? "w-4 sm:w-5 bg-white shadow-xs"
-                                    : "w-1.5 bg-white/60"
-                                }`}
-                              />
-                            ))}
-                          </div>
-                        </>
-                      )}
-                    </div>
-
-                    {/* Details */}
-                    <div className="p-6 pb-2">
-                      <h3 className="text-xl font-semibold text-[#29251f]">{product.name}</h3>
-
-                      <p className="mt-2 text-sm leading-6 text-[#746c62] line-clamp-2">
-                        {product.description}
-                      </p>
-                    </div>
-                  </div>
-
-                  <div className="p-6 pt-2">
-                    <div className="border-t border-[#ede6da] pt-4">
-                      <div className="flex items-baseline justify-between mb-3.5">
-                        <p className="text-[11px] font-semibold uppercase tracking-wider text-[#9a7748]">
-                          Pricing
-                        </p>
-                        <p className="text-base font-bold text-[#29251f]">
-                          {product.price}
-                        </p>
-                      </div>
-
-                      <div className="grid grid-cols-2 gap-2.5">
-                        <a
-                          href={`/custom-furniture?design=${encodeURIComponent(product.id)}`}
-                          className="inline-flex items-center justify-center rounded-xl border border-[#d5cab8] bg-[#fbf9f5] px-3 py-2.5 text-xs font-semibold text-[#4a3b2b] transition hover:border-[#8b6f47] hover:bg-white hover:text-[#8b6f47]"
-                        >
-                          Custom
-                        </a>
-                        <button
-                          type="button"
-                          onClick={() => handleBuyNow(product)}
-                          className="inline-flex items-center justify-center rounded-xl bg-[#29251f] px-3 py-2.5 text-xs font-semibold text-white shadow-xs transition hover:bg-[#8b6f47] active:scale-98"
-                        >
-                          Buy Now
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                </article>
-              );
-            })}
+            {filteredProducts.map((product) => (
+              <ProductCard
+                key={product.id || product.name}
+                product={product}
+                onView={(activeIndex) =>
+                  setGalleryProduct({ product, activeIndex })
+                }
+                onBuyNow={() => handleBuyNow(product)}
+              />
+            ))}
           </div>
         )}
       </section>
@@ -989,7 +936,7 @@ export default function FurniturePage() {
                     Price:
                   </span>
                   <span className="text-xs sm:text-sm font-bold text-white">
-                    {galleryProduct.product.price}
+                    {formatPrice(galleryProduct.product.price).text}
                   </span>
                 </div>
                 {galleryProduct.product.description && (
@@ -1044,9 +991,9 @@ export default function FurniturePage() {
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-[#eee8de] px-6 py-4 bg-[#faf7f2] shrink-0">
+            <div className="flex items-center justify-between border-b border-[#eee8de] px-4 sm:px-6 py-3.5 sm:py-4 bg-[#faf7f2] shrink-0">
               <div>
-                <h3 className="text-lg font-serif font-semibold text-[#29251f]">
+                <h3 className="text-base sm:text-lg font-serif font-semibold text-[#29251f]">
                   Complete Your Order
                 </h3>
                 <p className="text-xs text-gray-500">
@@ -1065,11 +1012,11 @@ export default function FurniturePage() {
             </div>
 
             {/* Product Summary Row */}
-            <div className="p-6 border-b border-[#eee8de] bg-[#fbf9f5] flex items-center gap-4 shrink-0">
+            <div className="p-3.5 sm:p-5 border-b border-[#eee8de] bg-[#fbf9f5] flex items-center gap-3 sm:gap-4 shrink-0">
               <img
                 src={checkoutProduct.image}
                 alt={checkoutProduct.name}
-                className="h-16 w-20 rounded-xl object-cover border border-[#e2dbcf] shrink-0"
+                className="h-14 w-16 sm:h-16 sm:w-20 rounded-xl object-cover border border-[#e2dbcf] shrink-0"
               />
               <div className="flex-1 min-w-0">
                 <span className="text-[10px] uppercase tracking-wider font-semibold text-[#8b6f47]">
@@ -1083,8 +1030,8 @@ export default function FurniturePage() {
                 </p>
               </div>
               <div className="text-right shrink-0">
-                <span className="text-xs text-gray-400 block">Total Amount</span>
-                <span className="text-lg font-serif font-bold text-[#8b6f47]">
+                <span className="text-[11px] text-gray-400 block">Total Amount</span>
+                <span className="text-base sm:text-lg font-serif font-bold text-[#8b6f47]">
                   {checkoutProduct.price.startsWith("₹")
                     ? checkoutProduct.price
                     : `₹${Number(checkoutProduct.price.replace(/[^\d.]/g, "")).toLocaleString("en-IN")}`}
@@ -1093,7 +1040,7 @@ export default function FurniturePage() {
             </div>
 
             {/* Checkout Form */}
-            <form onSubmit={handleProceedToPayment} className="p-6 space-y-4 overflow-y-auto">
+            <form onSubmit={handleProceedToPayment} className="p-4 sm:p-6 space-y-3.5 sm:space-y-4 overflow-y-auto">
               {checkoutError && (
                 <div className="rounded-xl bg-red-50 border border-red-200 text-red-700 p-3.5 text-xs space-y-1">
                   <p className="font-semibold flex items-center gap-1.5">
@@ -1114,9 +1061,12 @@ export default function FurniturePage() {
                     type="text"
                     required
                     value={checkoutCustomer.name}
-                    onChange={(e) =>
-                      setCheckoutCustomer({ ...checkoutCustomer, name: e.target.value })
-                    }
+                    onChange={(e) => {
+                      setCheckoutCustomer((prev) => ({ ...prev, name: e.target.value }));
+                      if (checkoutErrors.name) {
+                        setCheckoutErrors((prev) => ({ ...prev, name: "" }));
+                      }
+                    }}
                     placeholder="e.g. Rahul Sharma"
                     className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${
                       checkoutErrors.name
@@ -1143,12 +1093,22 @@ export default function FurniturePage() {
                       required
                       maxLength={10}
                       value={checkoutCustomer.mobile}
-                      onChange={(e) =>
-                        setCheckoutCustomer({
-                          ...checkoutCustomer,
-                          mobile: e.target.value.replace(/\D/g, "").slice(0, 10),
-                        })
-                      }
+                      onChange={(e) => {
+                        let val = e.target.value.replace(/\D/g, "");
+                        if (val.startsWith("91") && val.length > 10) {
+                          val = val.slice(2);
+                        } else if (val.startsWith("0") && val.length > 10) {
+                          val = val.slice(1);
+                        }
+                        val = val.slice(0, 10);
+                        setCheckoutCustomer((prev) => ({
+                          ...prev,
+                          mobile: val,
+                        }));
+                        if (checkoutErrors.mobile) {
+                          setCheckoutErrors((prev) => ({ ...prev, mobile: "" }));
+                        }
+                      }}
                       placeholder="9876543210"
                       className={`w-full rounded-xl border pl-11 pr-3.5 py-2.5 text-sm outline-none transition ${
                         checkoutErrors.mobile
@@ -1171,9 +1131,12 @@ export default function FurniturePage() {
                     type="email"
                     required
                     value={checkoutCustomer.email}
-                    onChange={(e) =>
-                      setCheckoutCustomer({ ...checkoutCustomer, email: e.target.value })
-                    }
+                    onChange={(e) => {
+                      setCheckoutCustomer((prev) => ({ ...prev, email: e.target.value }));
+                      if (checkoutErrors.email) {
+                        setCheckoutErrors((prev) => ({ ...prev, email: "" }));
+                      }
+                    }}
                     placeholder="rahul@example.com"
                     className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${
                       checkoutErrors.email
@@ -1480,19 +1443,56 @@ export default function FurniturePage() {
               </div>
             </div>
 
+            {/* Live Delivery Progress Tracker */}
+            <div className="mt-4 p-3.5 rounded-2xl bg-amber-50/80 border border-amber-200/70 text-left text-xs space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="font-semibold text-amber-900 flex items-center gap-1.5">
+                  <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                  Order Status: Confirmed
+                </span>
+                <span className="text-[10px] text-amber-700 bg-amber-100 px-2 py-0.5 rounded-full font-bold">
+                  Step 1 of 6
+                </span>
+              </div>
+              <div className="grid grid-cols-6 gap-1 text-[9px] text-center font-medium pt-1">
+                <div className="bg-emerald-600 text-white rounded py-1 shadow-2xs">✓ Confirmed</div>
+                <div className="bg-amber-100 text-amber-800 rounded py-1">Workshop</div>
+                <div className="bg-white/80 text-gray-400 rounded py-1">QA Check</div>
+                <div className="bg-white/80 text-gray-400 rounded py-1">Ready</div>
+                <div className="bg-white/80 text-gray-400 rounded py-1">Dispatch</div>
+                <div className="bg-white/80 text-gray-400 rounded py-1">Delivered</div>
+              </div>
+              <p className="text-[10px] text-amber-800/80 pt-0.5">
+                Our workshop is preparing timber & materials. Admin will update fulfillment stages until delivered.
+              </p>
+            </div>
+
             <div className="mt-6 flex flex-col gap-2.5">
               <a
-                href={userId ? (isAdmin ? "/admin/dashboard" : "/account") : "/furniture"}
-                className="w-full rounded-xl bg-[#29251f] hover:bg-[#8b6f47] text-white py-3 text-xs font-semibold transition"
+                href={`/account?order=${encodeURIComponent(paymentSuccess.orderNumber)}`}
+                className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#29251f] hover:bg-[#8b6f47] text-white py-3 text-xs font-semibold transition active:scale-98 shadow-sm"
               >
-                {userId ? "View Orders in My Account →" : "Continue Shopping →"}
+                <span>📦</span>
+                <span>Track Live Order in My Account</span>
+                <span>→</span>
               </a>
+
+              {isAdmin && (
+                <a
+                  href="/admin/dashboard?tab=orders"
+                  className="w-full inline-flex items-center justify-center gap-2 rounded-xl bg-[#f5efe6] hover:bg-[#ede3d5] text-[#3d281c] border border-[#d8c7b3] py-2.5 text-xs font-semibold transition"
+                >
+                  <span>⚙️</span>
+                  <span>View in Admin Dashboard (Manage & Mark Delivered)</span>
+                </a>
+              )}
+
               <button
                 type="button"
                 onClick={() => setPaymentSuccess(null)}
                 className="w-full rounded-xl border border-gray-300 hover:bg-gray-50 text-gray-600 py-2.5 text-xs font-medium transition"
               >
-                Close
+                Continue Shopping
               </button>
             </div>
           </div>

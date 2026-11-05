@@ -55,3 +55,12 @@ textarea::placeholder {
   animation: toastProgress 2.8s linear forwards;
 }
 
+/* Hide scrollbar for horizontal mobile pill tabs and sliders */
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+

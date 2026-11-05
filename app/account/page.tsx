@@ -160,6 +160,130 @@ export default function AccountPage() {
     orderNumber?: string;
   } | null>(null);
 
+  // Quick Order Lookup by Order Number (Direct tracking)
+  const [lookupOrderQuery, setLookupOrderQuery] = useState("");
+  const [lookupLoading, setLookupLoading] = useState(false);
+  const [lookupResult, setLookupResult] = useState<CustomerOrder | null>(null);
+  const [lookupError, setLookupError] = useState("");
+
+  // Storage URL resolver helper
+  const resolveStorageUrl = useCallback(async (rawPath: string | null | undefined): Promise<string | null> => {
+    if (!rawPath) return null;
+    try {
+      let storagePath = rawPath;
+      if (rawPath.startsWith("http://") || rawPath.startsWith("https://")) {
+        const marker = "/storage/v1/object/";
+        const markerIndex = rawPath.indexOf(marker);
+        if (markerIndex === -1) {
+          return rawPath;
+        }
+        const objectPath = rawPath.slice(markerIndex + marker.length).split("?")[0];
+        const parts = objectPath.split("/");
+        if (parts[0] === "public" || parts[0] === "sign" || parts[0] === "authenticated") {
+          storagePath = parts.slice(2).join("/");
+        }
+      }
+      const { data: signedData } = await supabase.storage
+        .from("gavika-project-files")
+        .createSignedUrl(storagePath, 60 * 60);
+      return signedData?.signedUrl || rawPath;
+    } catch {
+      return rawPath;
+    }
+  }, []);
+
+  const performLookup = useCallback(async (queryParam?: string) => {
+    const q = (queryParam || lookupOrderQuery).trim();
+    if (!q) return;
+
+    setLookupLoading(true);
+    setLookupError("");
+    setLookupResult(null);
+
+    try {
+      const { data: orderRow, error: qErr } = await supabase
+        .from("orders")
+        .select("*")
+        .ilike("order_number", `%${q}%`)
+        .limit(1)
+        .maybeSingle();
+
+      if (qErr || !orderRow) {
+        setLookupError(`No order found matching "${q}". Please verify the order number.`);
+        return;
+      }
+
+      let rawReq: any = null;
+      if (orderRow.request_id) {
+        const { data: reqData } = await supabase
+          .from("custom_requests")
+          .select("catalogue_design_name, catalogue_design_image_url, reference_image_url, furniture_type")
+          .eq("id", orderRow.request_id)
+          .maybeSingle();
+        rawReq = reqData;
+      }
+
+      let rawQuote: any = null;
+      if (orderRow.quotation_id) {
+        const { data: quoteData } = await supabase
+          .from("quotations")
+          .select("drawing_name, drawing_url")
+          .eq("id", orderRow.quotation_id)
+          .maybeSingle();
+        rawQuote = quoteData;
+      }
+
+      let drawingUrl: string | null = null;
+      if (rawQuote?.drawing_url) {
+        drawingUrl = await resolveStorageUrl(rawQuote.drawing_url);
+      }
+
+      let refImgUrl: string | null = null;
+      if (rawReq?.reference_image_url) {
+        refImgUrl = await resolveStorageUrl(rawReq.reference_image_url);
+      }
+
+      setLookupResult({
+        id: orderRow.id,
+        order_number: orderRow.order_number,
+        user_id: orderRow.user_id,
+        request_id: orderRow.request_id,
+        quotation_id: orderRow.quotation_id,
+        amount: Number(orderRow.amount),
+        status: orderRow.status,
+        expected_delivery_date: orderRow.expected_delivery_date ?? null,
+        delivery_address: orderRow.delivery_address ?? null,
+        created_at: orderRow.created_at,
+        updated_at: orderRow.updated_at,
+        quotations: rawQuote || null,
+        drawing_name: rawQuote?.drawing_name ?? null,
+        drawing_url: drawingUrl,
+        catalogue_design_name:
+          rawReq?.catalogue_design_name ??
+          rawReq?.furniture_type ??
+          (orderRow as any).product_name ??
+          "Gavika Handcrafted Furniture",
+        catalogue_design_image_url: rawReq?.catalogue_design_image_url ?? null,
+        reference_image_url: refImgUrl,
+      });
+    } catch (err: any) {
+      setLookupError(err.message || "Failed to search for order.");
+    } finally {
+      setLookupLoading(false);
+    }
+  }, [lookupOrderQuery, resolveStorageUrl]);
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const orderParam = params.get("order");
+      if (orderParam) {
+        setLookupOrderQuery(orderParam);
+        performLookup(orderParam);
+      }
+    }
+  }, [performLookup]);
+
   const handleExecuteConfirm = async () => {
     if (!confirmModal) return;
     setConfirmModal((prev) => (prev ? { ...prev, loading: true } : null));
@@ -533,177 +657,120 @@ export default function AccountPage() {
       setOrdersLoading(true);
 
       try {
-        const { data, error: ordersError } = await supabase
+        let rawOrdersList: any[] = [];
+
+        // 1. Direct query from orders table without fragile nested joins
+        const { data: primaryData, error: ordersError } = await supabase
           .from("orders")
           .select(`
-          id,
-          order_number,
-          user_id,
-          request_id,
-          quotation_id,
-          amount,
-          status,
-          expected_delivery_date,
-          delivery_address,
-          created_at,
-          updated_at,
-          quotations (
-            drawing_name,
-            drawing_url
-          ),
-          custom_requests (
-            catalogue_design_name,
-            catalogue_design_image_url,
-            reference_image_url
-        )
-      `)
+            id,
+            order_number,
+            user_id,
+            request_id,
+            quotation_id,
+            amount,
+            status,
+            expected_delivery_date,
+            delivery_address,
+            created_at,
+            updated_at
+          `)
           .eq("user_id", userId)
           .order("created_at", { ascending: false });
 
-        if (ordersError) {
-          console.error(
-            "Orders loading error:",
-            getSupabaseErrorMessage(ordersError)
-          );
+        if (!ordersError && primaryData && primaryData.length > 0) {
+          rawOrdersList = primaryData;
+        } else {
+          // Fallback: direct select * by user_id
+          const { data: fallbackData } = await supabase
+            .from("orders")
+            .select("*")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: false });
 
-          if (
-            mountedRef.current &&
-            currentUserIdRef.current === userId &&
-            dataLoadGenerationRef.current === loadGeneration
-          ) {
-            setOrders([]);
+          if (fallbackData && fallbackData.length > 0) {
+            rawOrdersList = fallbackData;
           }
-
-          return;
         }
 
-        /*
-         * Supabase quotation data is returned as:
-         *
-         * order.quotations.drawing_name
-         * order.quotations.drawing_url
-         *
-         * Convert it into a flat CustomerOrder object
-         * so OrderTrackingCard can directly use:
-         *
-         * order.drawing_name
-         * order.drawing_url
-         */
+        // 2. Also check if any orders exist for custom requests of this user where user_id was unlinked
+        if (rawOrdersList.length === 0) {
+          const { data: userReqs } = await supabase
+            .from("custom_requests")
+            .select("id")
+            .eq("user_id", userId);
 
+          if (userReqs && userReqs.length > 0) {
+            const reqIds = userReqs.map((r) => r.id);
+            const { data: reqOrders } = await supabase
+              .from("orders")
+              .select("*")
+              .in("request_id", reqIds)
+              .order("created_at", { ascending: false });
+
+            if (reqOrders && reqOrders.length > 0) {
+              rawOrdersList = reqOrders;
+              for (const o of reqOrders) {
+                if (!o.user_id) {
+                  supabase.from("orders").update({ user_id: userId }).eq("id", o.id).then();
+                }
+              }
+            }
+          }
+        }
+
+        // 3. Format orders by safely resolving request & quotation data
         const formattedOrders: CustomerOrder[] = await Promise.all(
-          (data || []).map(async (order: any) => {
-            let drawingUrl: string | null = null;
+          rawOrdersList.map(async (order: any) => {
+            let requestData: any = null;
+            if (order.request_id) {
+              const { data: rData } = await supabase
+                .from("custom_requests")
+                .select("catalogue_design_name, catalogue_design_image_url, reference_image_url, furniture_type")
+                .eq("id", order.request_id)
+                .maybeSingle();
+              requestData = rData;
+            }
 
-            const drawingPath = order.quotations?.drawing_url;
+            let quotationData: any = null;
+            if (order.quotation_id) {
+              const { data: qData } = await supabase
+                .from("quotations")
+                .select("drawing_name, drawing_url")
+                .eq("id", order.quotation_id)
+                .maybeSingle();
+              quotationData = qData;
+            }
+
+            let drawingUrl: string | null = null;
+            if (quotationData?.drawing_url) {
+              drawingUrl = await resolveStorageUrl(quotationData.drawing_url);
+            }
 
             let referenceImageUrl: string | null = null;
-
-            const { data: requestData, error: requestError } = await supabase
-              .from("custom_requests")
-              .select(`
-    catalogue_design_name,
-    catalogue_design_image_url,
-    reference_image_url
-  `)
-              .eq("id", order.request_id)
-              .maybeSingle();
-
-            if (requestError) {
-              console.error("Request image data error:", requestError.message);
-            }
-
-            const referenceImagePath = requestData?.reference_image_url ?? null;
-
-            if (referenceImagePath) {
-              const { data: referenceUrlData, error: referenceUrlError } =
-                await supabase.storage
-                  .from("gavika-project-files")
-                  .createSignedUrl(referenceImagePath, 60 * 60);
-
-              if (referenceUrlError) {
-                console.error("Reference image URL error:", referenceUrlError.message);
-              } else {
-                referenceImageUrl = referenceUrlData?.signedUrl ?? null;
-              }
-            }
-
-
-
-
-            if (drawingPath) {
-              let storagePath = drawingPath;
-
-              if (
-                drawingPath.startsWith("http://") ||
-                drawingPath.startsWith("https://")
-              ) {
-                const marker = "/storage/v1/object/";
-                const markerIndex = drawingPath.indexOf(marker);
-
-                if (markerIndex === -1) {
-                  console.error("Invalid drawing Storage URL:", drawingPath);
-                  storagePath = "";
-                } else {
-                  const objectPath = drawingPath
-                    .slice(markerIndex + marker.length)
-                    .split("?")[0];
-
-                  const parts = objectPath.split("/");
-
-                  if (
-                    parts[0] === "public" ||
-                    parts[0] === "sign" ||
-                    parts[0] === "authenticated"
-                  ) {
-                    storagePath = parts.slice(2).join("/");
-                  } else {
-                    storagePath = "";
-                  }
-                }
-              }
-
-              if (storagePath) {
-                const { data: signedUrlData, error: signedUrlError } =
-                  await supabase.storage
-                    .from("gavika-project-files")
-                    .createSignedUrl(storagePath, 60 * 60);
-
-                if (signedUrlError) {
-                  console.error("Drawing URL error:", signedUrlError.message);
-                } else {
-                  drawingUrl = signedUrlData?.signedUrl ?? null;
-                }
-              }
+            if (requestData?.reference_image_url) {
+              referenceImageUrl = await resolveStorageUrl(requestData.reference_image_url);
             }
 
             return {
               id: order.id,
               catalogue_design_name:
-                requestData?.catalogue_design_name ?? null,
-
-              catalogue_design_image_url:
-                requestData?.catalogue_design_image_url ?? null,
-
+                requestData?.catalogue_design_name ??
+                requestData?.furniture_type ??
+                (order as any).product_name ??
+                "Handcrafted Furniture Design",
+              catalogue_design_image_url: requestData?.catalogue_design_image_url ?? null,
               reference_image_url: referenceImageUrl,
               order_number: order.order_number,
               user_id: order.user_id,
               request_id: order.request_id,
               quotation_id: order.quotation_id,
               amount: Number(order.amount),
-
               status: order.status,
-
-              expected_delivery_date:
-                order.expected_delivery_date ?? null,
-
-              delivery_address:
-                order.delivery_address ?? null,
-
-              drawing_name:
-                order.quotations?.drawing_name ?? null,
-
+              expected_delivery_date: order.expected_delivery_date ?? null,
+              delivery_address: order.delivery_address ?? null,
+              drawing_name: quotationData?.drawing_name ?? null,
               drawing_url: drawingUrl,
-
               created_at: order.created_at,
               updated_at: order.updated_at,
             };
@@ -740,7 +807,7 @@ export default function AccountPage() {
         }
       }
     },
-    []
+    [resolveStorageUrl]
   );
 
   /*
@@ -1098,7 +1165,7 @@ export default function AccountPage() {
       setQuotations({});
       setOrders([]);
 
-      router.replace("/login");
+      router.replace("/login?logged_out=true");
     } catch (err) {
       console.error(
         "Unexpected logout error:",
@@ -1762,6 +1829,57 @@ export default function AccountPage() {
           <div className="mb-6">
             <h2 className="text-xl font-semibold text-[#3d281c]">My Orders</h2>
             <p className="text-gray-600 text-sm mt-1">Track your furniture order from confirmation to delivery.</p>
+          </div>
+
+          {/* Quick Order Lookup by Order Number */}
+          <div className="mb-6 p-4 rounded-2xl bg-white border border-[#e7dccd] shadow-xs">
+            <form
+              onSubmit={(e) => {
+                e.preventDefault();
+                performLookup();
+              }}
+              className="flex flex-col sm:flex-row gap-2.5"
+            >
+              <div className="relative flex-1">
+                <span className="absolute left-3.5 top-1/2 -translate-y-1/2 text-gray-400">🔍</span>
+                <input
+                  type="text"
+                  value={lookupOrderQuery}
+                  onChange={(e) => setLookupOrderQuery(e.target.value)}
+                  placeholder="Enter Order Number to track (e.g. ORD-123456-789)..."
+                  className="w-full rounded-xl border border-gray-300 pl-10 pr-4 py-2.5 text-sm text-gray-800 outline-none focus:border-[#7a5235]"
+                />
+              </div>
+              <button
+                type="submit"
+                disabled={lookupLoading || !lookupOrderQuery.trim()}
+                className="rounded-xl bg-[#3d281c] hover:bg-[#5a3927] text-white px-5 py-2.5 text-xs font-semibold transition disabled:opacity-50 shrink-0"
+              >
+                {lookupLoading ? "Tracking..." : "Track Order"}
+              </button>
+            </form>
+
+            {lookupResult && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <div className="flex items-center justify-between mb-3">
+                  <span className="text-xs font-bold text-emerald-800 flex items-center gap-1.5">
+                    <span>✓</span> Found Live Order: {lookupResult.order_number}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setLookupResult(null)}
+                    className="text-[11px] text-gray-400 hover:text-gray-600"
+                  >
+                    Clear Result
+                  </button>
+                </div>
+                <OrderTrackingCard order={lookupResult} />
+              </div>
+            )}
+
+            {lookupError && (
+              <p className="mt-2.5 text-xs text-rose-600 font-medium">{lookupError}</p>
+            )}
           </div>
 
           {ordersLoading ? (
@@ -2539,18 +2657,14 @@ function OrderTrackingCard({
             Order Progress
           </p>
 
-          <div className="overflow-x-auto pb-3">
-
+          {/* Desktop Timeline */}
+          <div className="hidden md:block overflow-x-auto pb-3">
             <div className="min-w-[700px]">
-
               <div className="relative">
-
                 {/* Background Line */}
-
                 <div className="absolute left-0 right-0 top-4 h-1 bg-[#e7dccd]" />
 
                 {/* Progress Line */}
-
                 <div
                   className="absolute left-0 top-4 h-1 bg-[#5a3927] transition-all duration-500"
                   style={{
@@ -2565,9 +2679,7 @@ function OrderTrackingCard({
                 />
 
                 {/* Steps */}
-
                 <div className="relative flex justify-between">
-
                   {ORDER_STEPS.map(
                     (step, index) => {
                       const completed =
@@ -2581,7 +2693,6 @@ function OrderTrackingCard({
                           key={step}
                           className="flex flex-col items-center w-28"
                         >
-
                           <div
                             className={`w-8 h-8 rounded-full flex items-center justify-center border-2 text-xs font-bold z-10 ${completed
                                 ? "bg-[#5a3927] border-[#5a3927] text-white"
@@ -2604,18 +2715,49 @@ function OrderTrackingCard({
                           >
                             {step}
                           </span>
-
                         </div>
                       );
                     }
                   )}
-
                 </div>
-
               </div>
-
             </div>
+          </div>
 
+          {/* Mobile Grid Timeline */}
+          <div className="md:hidden pt-1">
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              {ORDER_STEPS.map((step, index) => {
+                const completed = currentIndex >= index;
+                const active = currentIndex === index;
+
+                return (
+                  <div
+                    key={step}
+                    className={`p-2.5 rounded-xl border flex items-center gap-2 transition ${
+                      active
+                        ? "bg-[#3d281c] text-white border-[#3d281c] font-semibold shadow-2xs"
+                        : completed
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-medium"
+                        : "bg-white text-gray-400 border-gray-200"
+                    }`}
+                  >
+                    <div
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
+                        active
+                          ? "bg-white text-[#3d281c]"
+                          : completed
+                          ? "bg-emerald-600 text-white"
+                          : "bg-gray-100 text-gray-400"
+                      }`}
+                    >
+                      {completed && !active ? "✓" : index + 1}
+                    </div>
+                    <span className="truncate text-xs">{step}</span>
+                  </div>
+                );
+              })}
+            </div>
           </div>
 
         </div>

@@ -8,3 +8,12 @@ export const supabase = createClient(
   supabaseUrl,
   supabasePublishableKey
 );
+
+export function createEphemeralClient() {
+  return createClient(supabaseUrl, supabasePublishableKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+    },
+  });
+}
