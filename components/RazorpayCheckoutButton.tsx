@@ -132,6 +132,13 @@ export default function RazorpayCheckoutButton({
                 razorpay_order_id: response.razorpay_order_id,
                 razorpay_payment_id: response.razorpay_payment_id,
                 razorpay_signature: response.razorpay_signature,
+                orderDetails: {
+                  amount: amount < 100 ? amount : amount / 100,
+                  customer_name: prefill?.name || "Customer",
+                  customer_email: prefill?.email || null,
+                  customer_mobile: prefill?.contact || null,
+                  product_name: description || name || "Furniture Order",
+                },
               }),
             });
 

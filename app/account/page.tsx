@@ -2385,7 +2385,7 @@ export default function AccountPage() {
             </a>
 
             <a
-              href="tel:+918619906867"
+              href="tel:+916378575020"
               className="inline-block rounded-lg border border-[#5a3927] text-[#5a3927] px-6 py-2 font-medium hover:bg-[#5a3927]/5 transition"
             >
               Call Us
@@ -2422,10 +2422,10 @@ export default function AccountPage() {
             {/* Icon */}
             <div
               className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm border ${confirmModal.variant === "success"
-                  ? "bg-green-50 border-green-100 text-green-600"
-                  : confirmModal.variant === "danger"
-                    ? "bg-red-50 border-red-100 text-red-600"
-                    : "bg-[#f7f2ea] border-[#ded5c8] text-[#3d281c]"
+                ? "bg-green-50 border-green-100 text-green-600"
+                : confirmModal.variant === "danger"
+                  ? "bg-red-50 border-red-100 text-red-600"
+                  : "bg-[#f7f2ea] border-[#ded5c8] text-[#3d281c]"
                 }`}
             >
               {confirmModal.variant === "success" ? (
@@ -2466,10 +2466,10 @@ export default function AccountPage() {
                 disabled={confirmModal.loading}
                 onClick={handleExecuteConfirm}
                 className={`w-full py-3 px-4 rounded-xl active:scale-[0.98] text-sm font-semibold text-white shadow-lg flex items-center justify-center gap-2 transition disabled:opacity-50 ${confirmModal.variant === "success"
-                    ? "bg-[#2e7d32] hover:bg-[#1b5e20] shadow-green-900/20"
-                    : confirmModal.variant === "danger"
-                      ? "bg-red-600 hover:bg-red-700 shadow-red-600/25"
-                      : "bg-[#3d281c] hover:bg-[#2a1a11] shadow-[#3d281c]/25"
+                  ? "bg-[#2e7d32] hover:bg-[#1b5e20] shadow-green-900/20"
+                  : confirmModal.variant === "danger"
+                    ? "bg-red-600 hover:bg-red-700 shadow-red-600/25"
+                    : "bg-[#3d281c] hover:bg-[#2a1a11] shadow-[#3d281c]/25"
                   }`}
               >
                 {confirmModal.loading ? (
@@ -2695,8 +2695,8 @@ function OrderTrackingCard({
                         >
                           <div
                             className={`w-8 h-8 rounded-full flex items-center justify-center border-2 text-xs font-bold z-10 ${completed
-                                ? "bg-[#5a3927] border-[#5a3927] text-white"
-                                : "bg-white border-[#d8cbbb] text-gray-400"
+                              ? "bg-[#5a3927] border-[#5a3927] text-white"
+                              : "bg-white border-[#d8cbbb] text-gray-400"
                               } ${active
                                 ? "ring-4 ring-[#5a3927]/10"
                                 : ""
@@ -2709,8 +2709,8 @@ function OrderTrackingCard({
 
                           <span
                             className={`text-xs text-center mt-3 ${completed
-                                ? "font-semibold text-[#3d281c]"
-                                : "text-gray-400"
+                              ? "font-semibold text-[#3d281c]"
+                              : "text-gray-400"
                               }`}
                           >
                             {step}
@@ -2734,22 +2734,20 @@ function OrderTrackingCard({
                 return (
                   <div
                     key={step}
-                    className={`p-2.5 rounded-xl border flex items-center gap-2 transition ${
-                      active
+                    className={`p-2.5 rounded-xl border flex items-center gap-2 transition ${active
                         ? "bg-[#3d281c] text-white border-[#3d281c] font-semibold shadow-2xs"
                         : completed
-                        ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-medium"
-                        : "bg-white text-gray-400 border-gray-200"
-                    }`}
+                          ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-medium"
+                          : "bg-white text-gray-400 border-gray-200"
+                      }`}
                   >
                     <div
-                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${
-                        active
+                      className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${active
                           ? "bg-white text-[#3d281c]"
                           : completed
-                          ? "bg-emerald-600 text-white"
-                          : "bg-gray-100 text-gray-400"
-                      }`}
+                            ? "bg-emerald-600 text-white"
+                            : "bg-gray-100 text-gray-400"
+                        }`}
                     >
                       {completed && !active ? "✓" : index + 1}
                     </div>

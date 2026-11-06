@@ -232,6 +232,7 @@ export default function FurniturePage() {
             customerPhone: cleanPhone,
             customerEmail: checkoutCustomer.email,
             deliveryAddress: fullDeliveryAddress,
+            userId: userId || sessionUser?.id || "",
           },
         }),
       });
@@ -338,6 +339,9 @@ export default function FurniturePage() {
                       request_id: clientReq?.id || null,
                       amount,
                       status: "Confirmed",
+                      payment_status: "paid",
+                      razorpay_order_id: response.razorpay_order_id || null,
+                      razorpay_payment_id: response.razorpay_payment_id || null,
                       delivery_address: fullDeliveryAddress,
                     });
                   }

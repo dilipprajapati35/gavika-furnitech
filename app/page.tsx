@@ -1,11 +1,11 @@
 "use client";
 
+import ProductCard from "@/components/ProductCard";
+import { locationData } from "@/data/locations";
 import { extractProductImages, formatPrice } from "@/utils/product-images";
 import { supabase } from "@/utils/supabase/client";
-import { locationData } from "@/data/locations";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, useRef, useCallback } from "react";
-import ProductCard from "@/components/ProductCard";
+import { useCallback, useEffect, useRef, useState } from "react";
 const categories = [
   {
     name: "Living Room",
@@ -82,8 +82,8 @@ export default function Home() {
       : [];
   const checkoutAvailableCities =
     checkoutCustomer.country &&
-    checkoutCustomer.state &&
-    locationData[checkoutCustomer.country]?.[checkoutCustomer.state]
+      checkoutCustomer.state &&
+      locationData[checkoutCustomer.country]?.[checkoutCustomer.state]
       ? locationData[checkoutCustomer.country][checkoutCustomer.state]
       : [];
 
@@ -251,6 +251,7 @@ export default function Home() {
             customerPhone: cleanPhone,
             customerEmail: checkoutCustomer.email,
             deliveryAddress: fullDeliveryAddress,
+            userId: userId || sessionUser?.id || "",
           },
         }),
       });
@@ -358,6 +359,9 @@ export default function Home() {
                       request_id: clientReq?.id || null,
                       amount,
                       status: "Confirmed",
+                      payment_status: "paid",
+                      razorpay_order_id: response.razorpay_order_id || null,
+                      razorpay_payment_id: response.razorpay_payment_id || null,
                       delivery_address: fullDeliveryAddress,
                     });
                   }
@@ -588,8 +592,8 @@ export default function Home() {
                 }
               }}
               className={`transition ${activeSection === "home"
-                  ? "text-[#8b6f47] font-semibold"
-                  : "hover:text-[#8b6f47]"
+                ? "text-[#8b6f47] font-semibold"
+                : "hover:text-[#8b6f47]"
                 }`}
             >
               Home
@@ -607,8 +611,8 @@ export default function Home() {
               href="/#process"
               onClick={() => setActiveSection("about")}
               className={`transition ${activeSection === "about"
-                  ? "text-[#8b6f47] font-semibold"
-                  : "hover:text-[#8b6f47]"
+                ? "text-[#8b6f47] font-semibold"
+                : "hover:text-[#8b6f47]"
                 }`}
             >
               About
@@ -618,8 +622,8 @@ export default function Home() {
               href="/#contact"
               onClick={() => setActiveSection("contact")}
               className={`transition ${activeSection === "contact"
-                  ? "text-[#8b6f47] font-semibold"
-                  : "hover:text-[#8b6f47]"
+                ? "text-[#8b6f47] font-semibold"
+                : "hover:text-[#8b6f47]"
                 }`}
             >
               Contact
@@ -677,8 +681,8 @@ export default function Home() {
                   }
                 }}
                 className={`transition ${activeSection === "home"
-                    ? "text-[#8b6f47] font-semibold"
-                    : "hover:text-[#8b6f47]"
+                  ? "text-[#8b6f47] font-semibold"
+                  : "hover:text-[#8b6f47]"
                   }`}
               >
                 Home
@@ -707,8 +711,8 @@ export default function Home() {
                   setMobileMenuOpen(false);
                 }}
                 className={`transition ${activeSection === "about"
-                    ? "text-[#8b6f47] font-semibold"
-                    : "hover:text-[#8b6f47]"
+                  ? "text-[#8b6f47] font-semibold"
+                  : "hover:text-[#8b6f47]"
                   }`}
               >
                 About
@@ -721,8 +725,8 @@ export default function Home() {
                   setMobileMenuOpen(false);
                 }}
                 className={`transition ${activeSection === "contact"
-                    ? "text-[#8b6f47] font-semibold"
-                    : "hover:text-[#8b6f47]"
+                  ? "text-[#8b6f47] font-semibold"
+                  : "hover:text-[#8b6f47]"
                   }`}
               >
                 Contact
@@ -1100,10 +1104,10 @@ export default function Home() {
                   </p>
 
                   <a
-                    href="tel:8619906867"
+                    href="tel:6378575020"
                     className="mt-1 block font-semibold hover:text-[#8b5e3c]"
                   >
-                    8619906867
+                    6378575020
                   </a>
                 </div>
 
@@ -1123,7 +1127,7 @@ export default function Home() {
               </div>
 
               <a
-                href="https://wa.me/918619906867"
+                href="https://wa.me/916378575020"
                 target="_blank"
                 rel="noopener noreferrer"
                 className="mt-7 block w-full rounded-full bg-[#29251f] px-6 py-3.5 text-center text-sm font-semibold text-white transition hover:bg-[#8b5e3c]"
@@ -1167,7 +1171,7 @@ export default function Home() {
               </p>
 
               <p className="mt-2 text-sm">
-                8619906867
+                6378575020
               </p>
 
               <p className="mt-1 text-sm">
@@ -1292,11 +1296,10 @@ export default function Home() {
                             prev ? { ...prev, activeIndex: idx } : null
                           )
                         }
-                        className={`relative h-14 w-16 sm:h-16 sm:w-20 flex-shrink-0 snap-center overflow-hidden rounded-lg border-2 transition-all duration-200 ${
-                          isCurrent
+                        className={`relative h-14 w-16 sm:h-16 sm:w-20 flex-shrink-0 snap-center overflow-hidden rounded-lg border-2 transition-all duration-200 ${isCurrent
                             ? "border-[#d8bd91] ring-2 ring-[#d8bd91]/50 scale-105"
                             : "border-white/20 opacity-60 hover:opacity-100"
-                        }`}
+                          }`}
                       >
                         <img
                           src={imgUrl}
@@ -1453,11 +1456,10 @@ export default function Home() {
                       }
                     }}
                     placeholder="e.g. Rahul Sharma"
-                    className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${
-                      checkoutErrors.name
+                    className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.name
                         ? "border-red-500 bg-red-50/20"
                         : "border-gray-300 focus:border-[#8b6f47]"
-                    }`}
+                      }`}
                   />
                   {checkoutErrors.name && (
                     <p className="text-[11px] text-red-600 mt-1">{checkoutErrors.name}</p>
@@ -1495,11 +1497,10 @@ export default function Home() {
                         }
                       }}
                       placeholder="9876543210"
-                      className={`w-full rounded-xl border pl-12 pr-3.5 py-2.5 text-sm outline-none transition ${
-                        checkoutErrors.mobile
+                      className={`w-full rounded-xl border pl-12 pr-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.mobile
                           ? "border-red-500 bg-red-50/20"
                           : "border-gray-300 focus:border-[#8b6f47]"
-                      }`}
+                        }`}
                     />
                   </div>
                   {checkoutErrors.mobile && (
@@ -1523,11 +1524,10 @@ export default function Home() {
                       }
                     }}
                     placeholder="rahul@example.com"
-                    className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${
-                      checkoutErrors.email
+                    className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.email
                         ? "border-red-500 bg-red-50/20"
                         : "border-gray-300 focus:border-[#8b6f47]"
-                    }`}
+                      }`}
                   />
                   {checkoutErrors.email && (
                     <p className="text-[11px] text-red-600 mt-1">{checkoutErrors.email}</p>
@@ -1550,11 +1550,10 @@ export default function Home() {
                       }
                     }}
                     placeholder="Flat / House No., Building Name, Street, Landmark"
-                    className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${
-                      checkoutErrors.address
+                    className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.address
                         ? "border-red-500 bg-red-50/20"
                         : "border-gray-300 focus:border-[#8b6f47]"
-                    }`}
+                      }`}
                   />
                   {checkoutErrors.address && (
                     <p className="text-[11px] text-red-600 mt-1">{checkoutErrors.address}</p>
@@ -1582,11 +1581,10 @@ export default function Home() {
                       }
                     }}
                     required
-                    className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition cursor-pointer ${
-                      checkoutErrors.country
+                    className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition cursor-pointer ${checkoutErrors.country
                         ? "border-red-500 bg-red-50/20"
                         : "border-gray-300 focus:border-[#8b6f47]"
-                    }`}
+                      }`}
                   >
                     <option value="">Select Country</option>
                     {checkoutCountries.map((c) => (
@@ -1621,11 +1619,10 @@ export default function Home() {
                     }}
                     disabled={!checkoutCustomer.country}
                     required
-                    className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed ${
-                      checkoutErrors.state
+                    className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed ${checkoutErrors.state
                         ? "border-red-500 bg-red-50/20"
                         : "border-gray-300 focus:border-[#8b6f47]"
-                    }`}
+                      }`}
                   >
                     <option value="">Select State</option>
                     {checkoutAvailableStates.map((s) => (
@@ -1659,11 +1656,10 @@ export default function Home() {
                     }}
                     disabled={!checkoutCustomer.state}
                     required
-                    className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed ${
-                      checkoutErrors.city
+                    className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed ${checkoutErrors.city
                         ? "border-red-500 bg-red-50/20"
                         : "border-gray-300 focus:border-[#8b6f47]"
-                    }`}
+                      }`}
                   >
                     <option value="">Select City</option>
                     {checkoutAvailableCities.map((city) => (
@@ -1699,11 +1695,10 @@ export default function Home() {
                       }
                     }}
                     placeholder="e.g. 313001"
-                    className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${
-                      checkoutErrors.pincode
+                    className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.pincode
                         ? "border-red-500 bg-red-50/20"
                         : "border-gray-300 focus:border-[#8b6f47]"
-                    }`}
+                      }`}
                   />
                   {checkoutErrors.pincode && (
                     <p className="text-[11px] text-red-600 mt-1">{checkoutErrors.pincode}</p>
