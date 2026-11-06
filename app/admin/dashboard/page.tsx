@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { supabase } from "@/utils/supabase/client";
+import { supabase, createEphemeralClient } from "@/utils/supabase/client";
 import {
   extractProductImages,
   deleteProductImagesFromStorage,
@@ -463,6 +463,32 @@ export default function AdminDashboard() {
   const [currentUserId, setCurrentUserId] = useState<string>("");
   const [currentUserEmail, setCurrentUserEmail] = useState<string>("");
 
+  // Create User State
+  const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  const [createUserForm, setCreateUserForm] = useState({
+    full_name: "",
+    email: "",
+    mobile: "",
+    password: "",
+    is_admin: false,
+  });
+  const [createUserLoading, setCreateUserLoading] = useState(false);
+  const [showCreatePassword, setShowCreatePassword] = useState(false);
+  const [createUserError, setCreateUserError] = useState("");
+
+  // Edit User State
+  const [editingUser, setEditingUser] = useState<ManagedUser | null>(null);
+  const [editUserForm, setEditUserForm] = useState({
+    full_name: "",
+    email: "",
+    mobile: "",
+    newPassword: "",
+    is_admin: false,
+  });
+  const [editUserLoading, setEditUserLoading] = useState(false);
+  const [showEditPassword, setShowEditPassword] = useState(false);
+  const [editUserError, setEditUserError] = useState("");
+
   const [ordersList, setOrdersList] = useState<AdminOrder[]>([]);
   const [ordersLoading, setOrdersLoading] = useState(false);
   const [orderStatusFilter, setOrderStatusFilter] = useState<string>("All");
@@ -918,6 +944,7 @@ export default function AdminDashboard() {
   const loadOrders = useCallback(async () => {
     setOrdersLoading(true);
     try {
+      let rawOrders: any[] = [];
       const { data, error: ordersErr } = await supabase
         .from("orders")
         .select(`
@@ -962,44 +989,86 @@ export default function AdminDashboard() {
         `)
         .order("created_at", { ascending: false });
 
-      if (ordersErr) {
-        console.error("Orders loading error:", ordersErr.message);
-        return;
+      if (ordersErr || !data) {
+        console.warn("Direct joined orders select failed, using resilient fallback query:", ordersErr?.message);
+        const { data: directData, error: directErr } = await supabase
+          .from("orders")
+          .select("*")
+          .order("created_at", { ascending: false });
+
+        if (directErr || !directData) {
+          console.error("Error in fallback loadOrders:", directErr);
+          setOrdersList([]);
+          return;
+        }
+
+        // Populate custom_requests and quotations separately
+        const reqIds = directData.map((o: any) => o.request_id).filter(Boolean);
+        const quoteIds = directData.map((o: any) => o.quotation_id).filter(Boolean);
+
+        let reqMap: Record<string, any> = {};
+        let quoteMap: Record<string, any> = {};
+
+        if (reqIds.length > 0) {
+          const { data: reqRows } = await supabase
+            .from("custom_requests")
+            .select("id, request_id, full_name, mobile, email, furniture_type, room_usage, length, width, height, preferred_material, requirement, delivery_location, reference_image_url, catalogue_design_name, catalogue_design_image_url")
+            .in("id", reqIds);
+          if (reqRows) {
+            reqRows.forEach((r: any) => { reqMap[r.id] = r; });
+          }
+        }
+
+        if (quoteIds.length > 0) {
+          const { data: quoteRows } = await supabase
+            .from("quotations")
+            .select("id, quotation_number, amount, description, validity_days, drawing_name, drawing_url")
+            .in("id", quoteIds);
+          if (quoteRows) {
+            quoteRows.forEach((q: any) => { quoteMap[q.id] = q; });
+          }
+        }
+
+        rawOrders = directData.map((ord: any) => ({
+          ...ord,
+          custom_requests: ord.request_id ? reqMap[ord.request_id] || null : null,
+          quotations: ord.quotation_id ? quoteMap[ord.quotation_id] || null : null,
+        }));
+      } else {
+        rawOrders = data as any[];
       }
 
-      if (data) {
-        const mappedOrders: AdminOrder[] = await Promise.all(
-          (data as any[]).map(async (ord) => {
-            const rawReq = Array.isArray(ord.custom_requests)
-              ? ord.custom_requests[0]
-              : ord.custom_requests;
-            const rawQuote = Array.isArray(ord.quotations)
-              ? ord.quotations[0]
-              : ord.quotations;
+      const mappedOrders: AdminOrder[] = await Promise.all(
+        rawOrders.map(async (ord) => {
+          const rawReq = Array.isArray(ord.custom_requests)
+            ? ord.custom_requests[0]
+            : ord.custom_requests;
+          const rawQuote = Array.isArray(ord.quotations)
+            ? ord.quotations[0]
+            : ord.quotations;
 
-            let refImg = rawReq?.reference_image_url || null;
-            let drawUrl = rawQuote?.drawing_url || null;
+          let refImg = rawReq?.reference_image_url || null;
+          let drawUrl = rawQuote?.drawing_url || null;
 
-            if (refImg) {
-              refImg = await getStorageSignedUrl(refImg);
-            }
-            if (drawUrl) {
-              drawUrl = await getStorageSignedUrl(drawUrl);
-            }
+          if (refImg) {
+            refImg = await getStorageSignedUrl(refImg);
+          }
+          if (drawUrl) {
+            drawUrl = await getStorageSignedUrl(drawUrl);
+          }
 
-            return {
-              ...ord,
-              custom_requests: rawReq
-                ? { ...rawReq, reference_image_url: refImg }
-                : null,
-              quotations: rawQuote
-                ? { ...rawQuote, drawing_url: drawUrl }
-                : null,
-            };
-          })
-        );
-        setOrdersList(mappedOrders);
-      }
+          return {
+            ...ord,
+            custom_requests: rawReq
+              ? { ...rawReq, reference_image_url: refImg }
+              : null,
+            quotations: rawQuote
+              ? { ...rawQuote, drawing_url: drawUrl }
+              : null,
+          };
+        })
+      );
+      setOrdersList(mappedOrders);
     } catch (err) {
       console.error("Error in loadOrders:", err);
     } finally {
@@ -1424,12 +1493,274 @@ export default function AdminDashboard() {
     });
   };
 
+  const handleCreateUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanName = createUserForm.full_name.trim();
+    const cleanEmail = createUserForm.email.trim().toLowerCase();
+    const cleanMobile = createUserForm.mobile.trim();
+    const cleanPassword = createUserForm.password;
+    const isNewAdmin = createUserForm.is_admin;
+
+    if (!cleanName) {
+      setCreateUserError("Full Name is required.");
+      return;
+    }
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setCreateUserError("Please enter a valid email address.");
+      return;
+    }
+    if (!cleanPassword || cleanPassword.length < 6) {
+      setCreateUserError("Password must be at least 6 characters.");
+      return;
+    }
+
+    setCreateUserLoading(true);
+    setCreateUserError("");
+
+    try {
+      // 1. Try RPC procedure (security definer in Supabase Postgres)
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc(
+        "create_user_by_admin",
+        {
+          p_email: cleanEmail,
+          p_password: cleanPassword,
+          p_full_name: cleanName,
+          p_mobile: cleanMobile,
+          p_is_admin: isNewAdmin,
+        }
+      );
+
+      if (!rpcErr && rpcRes && rpcRes.success) {
+        showToast({
+          type: "success",
+          text: `Account created successfully for ${cleanName}!`,
+        });
+        setShowCreateUserModal(false);
+        setCreateUserForm({
+          full_name: "",
+          email: "",
+          mobile: "",
+          password: "",
+          is_admin: false,
+        });
+        loadUsers();
+        return;
+      }
+
+      if (rpcRes && rpcRes.success === false && !rpcErr) {
+        setCreateUserError(rpcRes.message || "Could not create user.");
+        return;
+      }
+
+      // 2. Client Fallback via ephemeral client
+      const tempClient = createEphemeralClient();
+      const { data: signUpData, error: signUpErr } =
+        await tempClient.auth.signUp({
+          email: cleanEmail,
+          password: cleanPassword,
+          options: {
+            data: {
+              full_name: cleanName,
+              mobile: cleanMobile,
+            },
+          },
+        });
+
+      if (signUpErr) {
+        setCreateUserError(signUpErr.message);
+        return;
+      }
+
+      if (isNewAdmin && signUpData?.user?.id) {
+        await supabase
+          .from("admin_users")
+          .insert({ user_id: signUpData.user.id });
+      }
+
+      showToast({
+        type: "success",
+        text: `Account created successfully for ${cleanName}!`,
+      });
+      setShowCreateUserModal(false);
+      setCreateUserForm({
+        full_name: "",
+        email: "",
+        mobile: "",
+        password: "",
+        is_admin: false,
+      });
+      loadUsers();
+    } catch (err: any) {
+      setCreateUserError(err?.message || "An unexpected error occurred.");
+    } finally {
+      setCreateUserLoading(false);
+    }
+  };
+
+  const handleOpenEditModal = (targetUser: ManagedUser) => {
+    setEditingUser(targetUser);
+    setEditUserForm({
+      full_name: targetUser.full_name || "",
+      email: targetUser.email || "",
+      mobile: targetUser.mobile && targetUser.mobile !== "-" ? targetUser.mobile : "",
+      newPassword: "",
+      is_admin: targetUser.is_admin,
+    });
+    setEditUserError("");
+    setShowEditPassword(false);
+  };
+
+  const handleSaveEditUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editingUser) return;
+
+    const cleanName = editUserForm.full_name.trim();
+    const cleanEmail = editUserForm.email.trim().toLowerCase();
+    const cleanMobile = editUserForm.mobile.trim();
+    const newPassword = editUserForm.newPassword;
+    const targetIsAdmin = editUserForm.is_admin;
+
+    if (!cleanName) {
+      setEditUserError("Full Name cannot be empty.");
+      return;
+    }
+    if (!cleanEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail)) {
+      setEditUserError("Please enter a valid email address.");
+      return;
+    }
+    if (newPassword && newPassword.length < 6) {
+      setEditUserError("Password must be at least 6 characters.");
+      return;
+    }
+
+    if (editingUser.id === currentUserId && !targetIsAdmin) {
+      const adminCount = usersList.filter((u) => u.is_admin).length;
+      if (adminCount <= 1) {
+        setEditUserError("Cannot revoke your own administrator privileges when you are the sole administrator.");
+        return;
+      }
+    }
+
+    setEditUserLoading(true);
+    setEditUserError("");
+
+    try {
+      // 1. Try RPC procedure
+      const { data: rpcRes, error: rpcErr } = await supabase.rpc(
+        "update_user_details_by_admin",
+        {
+          p_user_id: editingUser.id,
+          p_full_name: cleanName,
+          p_mobile: cleanMobile,
+          p_email: cleanEmail,
+          p_is_admin: targetIsAdmin,
+          p_password: newPassword ? newPassword : null,
+        }
+      );
+
+      if (!rpcErr && rpcRes && rpcRes.success) {
+        showToast({
+          type: "success",
+          text: `User details updated successfully for ${cleanName}!`,
+        });
+        setEditingUser(null);
+        loadUsers();
+        if (selectedUserDetails?.id === editingUser.id) {
+          setSelectedUserDetails((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  full_name: cleanName,
+                  email: cleanEmail,
+                  mobile: cleanMobile || "-",
+                  is_admin: targetIsAdmin,
+                }
+              : null
+          );
+        }
+        return;
+      }
+
+      if (rpcRes && rpcRes.success === false && !rpcErr) {
+        setEditUserError(rpcRes.message || "Failed to update user.");
+        return;
+      }
+
+      // 2. Direct Fallback
+      await supabase
+        .from("custom_requests")
+        .update({
+          full_name: cleanName,
+          mobile: cleanMobile,
+          email: cleanEmail,
+        })
+        .eq("user_id", editingUser.id);
+
+      if (targetIsAdmin !== editingUser.is_admin) {
+        if (targetIsAdmin) {
+          await supabase
+            .from("admin_users")
+            .insert({ user_id: editingUser.id });
+        } else {
+          await supabase
+            .from("admin_users")
+            .delete()
+            .eq("user_id", editingUser.id);
+        }
+      }
+
+      if (editingUser.id === currentUserId) {
+        const updatePayload: any = {
+          email: cleanEmail,
+          data: {
+            full_name: cleanName,
+            mobile: cleanMobile,
+          },
+        };
+        if (newPassword) updatePayload.password = newPassword;
+        await supabase.auth.updateUser(updatePayload);
+      }
+
+      showToast({
+        type: "success",
+        text: `User details updated successfully for ${cleanName}!`,
+      });
+      setEditingUser(null);
+      loadUsers();
+      if (selectedUserDetails?.id === editingUser.id) {
+        setSelectedUserDetails((prev) =>
+          prev
+            ? {
+                ...prev,
+                full_name: cleanName,
+                email: cleanEmail,
+                mobile: cleanMobile || "-",
+                is_admin: targetIsAdmin,
+              }
+            : null
+        );
+      }
+    } catch (err: any) {
+      setEditUserError(err?.message || "Failed to update user.");
+    } finally {
+      setEditUserLoading(false);
+    }
+  };
+
   useEffect(() => {
     loadRequests();
     loadOrders();
     loadFurnitureOptions();
     loadProducts();
     loadUsers();
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const tabParam = params.get("tab");
+      if (tabParam && ["requests", "orders", "options", "products", "users"].includes(tabParam)) {
+        setActiveTab(tabParam as any);
+      }
+    }
   }, [loadRequests, loadOrders, loadFurnitureOptions, loadProducts, loadUsers]);
 
   async function handleAddProduct(e: React.FormEvent) {
@@ -1937,9 +2268,9 @@ export default function AdminDashboard() {
         return;
       }
 
-      router.push("/login");
+      router.push("/login?logged_out=true");
     } catch {
-      setError("Unable to logout. Please try again.");
+      router.push("/login?logged_out=true");
     }
   }
 
@@ -2384,41 +2715,61 @@ export default function AdminDashboard() {
       )}
 
       {/* Header */}
-      <header className="bg-[#3d281c] text-white">
-        <div className="max-w-7xl mx-auto px-6 py-5 flex items-center justify-between">
-          <div>
-            <h1 className="text-2xl font-serif font-semibold">
-              Gavika Furnitech
-            </h1>
+      <header className="bg-[#3d281c] text-white sticky top-0 z-40 shadow-sm">
+        <div className="max-w-7xl mx-auto px-3.5 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
+          <div className="flex items-center gap-2.5 sm:gap-3">
+            <a href="/" className="flex items-center gap-2.5 sm:gap-3 hover:opacity-90 transition">
+              <img
+                src="/Gavika-new-logo.png"
+                alt="Gavika Furnitech"
+                className="h-8 w-8 sm:h-10 sm:w-10 object-contain rounded-lg bg-white/10 p-1 shrink-0"
+              />
+              <div>
+                <h1 className="text-base sm:text-xl font-serif font-semibold tracking-wide">
+                  Gavika Furnitech
+                </h1>
 
-            <p className="text-sm text-white/70">
-              Admin Dashboard
-            </p>
+                <p className="text-[10px] sm:text-xs text-white/70">
+                  Admin Dashboard
+                </p>
+              </div>
+            </a>
           </div>
 
-          <button
-            onClick={handleLogout}
-            className="rounded-lg bg-white/10 px-4 py-2 text-sm hover:bg-white/20"
-          >
-            Logout
-          </button>
+          <div className="flex items-center gap-2 sm:gap-3">
+            <a
+              href="/"
+              className="rounded-xl border border-white/20 bg-white/10 px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-xs font-semibold hover:bg-white/20 transition flex items-center gap-1.5"
+            >
+              <span>🏪</span>
+              <span className="hidden sm:inline">View Storefront</span>
+              <span className="sm:hidden">Store</span>
+            </a>
+
+            <button
+              onClick={handleLogout}
+              className="rounded-xl bg-white/10 px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold hover:bg-red-600/80 transition"
+            >
+              Logout
+            </button>
+          </div>
         </div>
       </header>
 
       {/* Dashboard */}
-      <section className="max-w-7xl mx-auto px-6 py-8">
+      <section className="max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-8">
 
-        {/* Tab Navigation */}
-        <div className="flex flex-wrap items-center gap-3 mb-8 border-b border-[#ded5c8] pb-4">
+        {/* Tab Navigation (Touch-Friendly Horizontal Scroll on Mobile, Wrapped on Desktop) */}
+        <div className="flex items-center gap-2 mb-6 sm:mb-8 border-b border-[#ded5c8] pb-3 overflow-x-auto no-scrollbar -mx-3.5 px-3.5 sm:mx-0 sm:px-0 sm:flex-wrap">
           <button
             onClick={() => setActiveTab("requests")}
-            className={`px-5 py-2.5 rounded-lg font-medium text-sm transition ${
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${
               activeTab === "requests"
                 ? "bg-[#3d281c] text-white shadow-sm"
                 : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
             }`}
           >
-            📋 Customer Requests ({requests.length})
+            📋 Requests ({requests.length})
           </button>
 
           <button
@@ -2426,15 +2777,15 @@ export default function AdminDashboard() {
               setActiveTab("orders");
               loadOrders();
             }}
-            className={`px-5 py-2.5 rounded-lg font-medium text-sm transition flex items-center gap-2 ${
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 ${
               activeTab === "orders"
                 ? "bg-[#3d281c] text-white shadow-sm"
                 : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
             }`}
           >
-            <span>📦 Customer Orders</span>
+            <span>📦 Orders</span>
             <span
-              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+              className={`rounded-full px-2 py-0.5 text-[10px] sm:text-xs font-semibold ${
                 activeTab === "orders"
                   ? "bg-[#7a5235] text-white"
                   : "bg-[#f5efe6] text-[#7a5235]"
@@ -2449,13 +2800,13 @@ export default function AdminDashboard() {
               setActiveTab("products");
               loadProducts();
             }}
-            className={`px-5 py-2.5 rounded-lg font-medium text-sm transition ${
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${
               activeTab === "products"
                 ? "bg-[#3d281c] text-white shadow-sm"
                 : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
             }`}
           >
-            🛋️ Catalogue Products ({productsList.length})
+            🛋️ Catalogue ({productsList.length})
           </button>
 
           <button
@@ -2463,7 +2814,7 @@ export default function AdminDashboard() {
               setActiveTab("options");
               loadFurnitureOptions();
             }}
-            className={`px-5 py-2.5 rounded-lg font-medium text-sm transition ${
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${
               activeTab === "options"
                 ? "bg-[#3d281c] text-white shadow-sm"
                 : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
@@ -2477,15 +2828,15 @@ export default function AdminDashboard() {
               setActiveTab("users");
               loadUsers();
             }}
-            className={`px-5 py-2.5 rounded-lg font-medium text-sm transition flex items-center gap-2 ${
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 ${
               activeTab === "users"
                 ? "bg-[#3d281c] text-white shadow-sm"
                 : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
             }`}
           >
-            <span>👥 User Management</span>
+            <span>👥 Users</span>
             <span
-              className={`rounded-full px-2 py-0.5 text-xs font-semibold ${
+              className={`rounded-full px-2 py-0.5 text-[10px] sm:text-xs font-semibold ${
                 activeTab === "users"
                   ? "bg-[#7a5235] text-white"
                   : "bg-[#f5efe6] text-[#7a5235]"
@@ -2942,8 +3293,8 @@ export default function AdminDashboard() {
 
             {/* Filter and Search Bar */}
             <div className="bg-white rounded-2xl p-4 border border-[#e7dccd] shadow-xs space-y-4">
-              {/* Status Pills */}
-              <div className="flex flex-wrap items-center gap-2">
+              {/* Status Pills (Touch-scrollable on mobile) */}
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar pb-1 -mx-2 px-2 sm:mx-0 sm:px-0 sm:flex-wrap">
                 {[
                   { key: "All", label: "All Orders", count: ordersList.length },
                   { key: "Confirmed", label: "Confirmed", count: ordersList.filter(o => o.status === "Confirmed").length },
@@ -2958,7 +3309,7 @@ export default function AdminDashboard() {
                     key={tab.key}
                     type="button"
                     onClick={() => setOrderStatusFilter(tab.key)}
-                    className={`px-3.5 py-1.5 rounded-xl text-xs font-medium transition flex items-center gap-1.5 ${
+                    className={`px-3 py-1.5 rounded-xl text-xs font-medium transition flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
                       orderStatusFilter === tab.key
                         ? "bg-[#3d281c] text-white shadow-xs"
                         : "bg-[#f5efe6] text-gray-700 hover:bg-[#ede3d5]"
@@ -3063,177 +3414,332 @@ export default function AdminDashboard() {
                 }
 
                 return (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-[#f5efe6] text-[#3d281c] font-semibold text-xs border-b border-[#ded5c8]">
-                        <tr>
-                          <th className="text-left px-5 py-4">Order # & Date</th>
-                          <th className="text-left px-5 py-4">Customer</th>
-                          <th className="text-left px-5 py-4">Item & Drawing</th>
-                          <th className="text-left px-5 py-4">Delivery & Target</th>
-                          <th className="text-left px-5 py-4">Amount</th>
-                          <th className="text-left px-5 py-4">Live Status & Update</th>
-                          <th className="text-left px-5 py-4">Action</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-100">
-                        {filtered.map((ord) => {
-                          const req = ord.custom_requests;
-                          const quote = ord.quotations;
+                  <>
+                    {/* Desktop Table View */}
+                    <div className="hidden lg:block overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-[#f5efe6] text-[#3d281c] font-semibold text-xs border-b border-[#ded5c8]">
+                          <tr>
+                            <th className="text-left px-5 py-4">Order # & Date</th>
+                            <th className="text-left px-5 py-4">Customer</th>
+                            <th className="text-left px-5 py-4">Item & Drawing</th>
+                            <th className="text-left px-5 py-4">Delivery & Target</th>
+                            <th className="text-left px-5 py-4">Amount</th>
+                            <th className="text-left px-5 py-4">Live Status & Update</th>
+                            <th className="text-left px-5 py-4">Action</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-gray-100">
+                          {filtered.map((ord) => {
+                            const req = ord.custom_requests;
+                            const quote = ord.quotations;
 
-                          return (
-                            <tr
-                              key={ord.id}
-                              className="hover:bg-[#faf7f2] transition-colors"
-                            >
-                              {/* Order Number & Date */}
-                              <td className="px-5 py-4">
-                                <span className="font-semibold text-[#7a5235] block font-mono">
+                            return (
+                              <tr
+                                key={ord.id}
+                                className="hover:bg-[#faf7f2] transition-colors"
+                              >
+                                {/* Order Number & Date */}
+                                <td className="px-5 py-4">
+                                  <span className="font-semibold text-[#7a5235] block font-mono">
+                                    {ord.order_number}
+                                  </span>
+                                  <span className="text-xs text-gray-500 block mt-0.5">
+                                    {formatOrderDate(ord.created_at)}
+                                  </span>
+                                  {quote?.quotation_number && (
+                                    <span className="text-[10px] text-gray-400 block font-mono">
+                                      Quote: {quote.quotation_number}
+                                    </span>
+                                  )}
+                                </td>
+
+                                {/* Customer */}
+                                <td className="px-5 py-4">
+                                  <div className="font-medium text-gray-900">
+                                    {(ord as any).customer_name || req?.full_name || "Customer"}
+                                  </div>
+                                  {((ord as any).customer_mobile || req?.mobile) && (
+                                    <a
+                                      href={`tel:${(ord as any).customer_mobile || req?.mobile}`}
+                                      className="text-xs text-[#7a5235] hover:underline flex items-center gap-1 mt-0.5"
+                                    >
+                                      <span>📞</span>
+                                      <span>{(ord as any).customer_mobile || req?.mobile}</span>
+                                    </a>
+                                  )}
+                                  {((ord as any).customer_email || req?.email) && (
+                                    <a
+                                      href={`mailto:${(ord as any).customer_email || req?.email}`}
+                                      className="text-[11px] text-gray-500 hover:underline block truncate max-w-[180px]"
+                                      title={(ord as any).customer_email || req?.email}
+                                    >
+                                      {(ord as any).customer_email || req?.email}
+                                    </a>
+                                  )}
+                                </td>
+
+                                {/* Item & Specs */}
+                                <td className="px-5 py-4">
+                                  <div className="font-medium text-gray-800">
+                                    {(ord as any).product_name || req?.catalogue_design_name || req?.furniture_type || "Custom Furniture"}
+                                  </div>
+                                  {req?.catalogue_design_name && (ord as any).product_name && (
+                                    <span className="text-xs text-[#7a5235] block">
+                                      {req.catalogue_design_name}
+                                    </span>
+                                  )}
+                                  {quote?.drawing_url ? (
+                                    <a
+                                      href={quote.drawing_url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="inline-flex items-center gap-1 text-[11px] text-[#7a5235] hover:underline font-semibold mt-1 bg-[#f5efe6] px-2 py-0.5 rounded"
+                                    >
+                                      <span>📐</span>
+                                      <span>CAD Drawing</span>
+                                    </a>
+                                  ) : (
+                                    <span className="text-[11px] text-gray-400 block mt-0.5">
+                                      No CAD attached
+                                    </span>
+                                  )}
+                                </td>
+
+                                {/* Delivery */}
+                                <td className="px-5 py-4">
+                                  <div className="text-xs text-gray-800 max-w-[200px] truncate" title={ord.delivery_address || req?.delivery_location || ""}>
+                                    📍 {ord.delivery_address || req?.delivery_location || "Not specified"}
+                                  </div>
+                                  <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
+                                    <span>📅 Target:</span>
+                                    <span className="font-medium text-gray-700">
+                                      {formatOrderDate(ord.expected_delivery_date)}
+                                    </span>
+                                  </div>
+                                </td>
+
+                                {/* Amount */}
+                                <td className="px-5 py-4 whitespace-nowrap">
+                                  <span className="font-serif font-bold text-[#3d281c] text-base">
+                                    ₹{Number(ord.amount).toLocaleString("en-IN")}
+                                  </span>
+                                </td>
+
+                                {/* Live Status & Quick Selector */}
+                                <td className="px-5 py-4">
+                                  <div className="space-y-1.5">
+                                    <div>
+                                      <span
+                                        className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${getOrderStatusBadgeClasses(
+                                          ord.status
+                                        )}`}
+                                      >
+                                        <span
+                                          className={`h-2 w-2 rounded-full ${getOrderStatusDot(
+                                            ord.status
+                                          )}`}
+                                        />
+                                        <span>{ord.status}</span>
+                                      </span>
+                                    </div>
+
+                                    {/* Quick Stage Dropdown */}
+                                    <select
+                                      value={ord.status}
+                                      disabled={updatingOrderId === ord.id}
+                                      onChange={(e) =>
+                                        handleUpdateOrderStatus(ord.id, e.target.value)
+                                      }
+                                      className="text-xs font-medium rounded-lg border border-gray-300 bg-white text-gray-800 px-2.5 py-1 focus:border-[#7a5235] outline-none shadow-xs cursor-pointer hover:border-[#7a5235] transition disabled:opacity-50"
+                                    >
+                                      <option value="" disabled>Change stage...</option>
+                                      {ALL_ORDER_STATUSES.map((st) => (
+                                        <option key={st} value={st}>
+                                          → {st}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  </div>
+                                </td>
+
+                                {/* Action */}
+                                <td className="px-5 py-4 whitespace-nowrap">
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setSelectedOrderDetails(ord);
+                                      setEditingDeliveryDate(
+                                        ord.expected_delivery_date
+                                          ? ord.expected_delivery_date.split("T")[0]
+                                          : ""
+                                      );
+                                    }}
+                                    className="rounded-lg bg-[#3d281c] text-white px-3.5 py-2 text-xs font-medium hover:bg-[#5a3927] transition flex items-center gap-1.5 shadow-xs"
+                                  >
+                                    <span>🔍</span>
+                                    <span>Track & Details</span>
+                                  </button>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Mobile Card View */}
+                    <div className="lg:hidden p-3 space-y-3.5 bg-[#faf7f2]/50 text-left">
+                      {filtered.map((ord) => {
+                        const req = ord.custom_requests;
+                        const quote = ord.quotations;
+
+                        return (
+                          <div
+                            key={ord.id}
+                            className="bg-white rounded-2xl p-4 border border-[#e7dccd] shadow-2xs space-y-3"
+                          >
+                            {/* Top Header: Order Number + Amount */}
+                            <div className="flex items-center justify-between gap-2">
+                              <div>
+                                <span className="font-mono font-bold text-sm text-[#7a5235]">
                                   {ord.order_number}
                                 </span>
-                                <span className="text-xs text-gray-500 block mt-0.5">
+                                <span className="text-[11px] text-gray-500 block">
                                   {formatOrderDate(ord.created_at)}
                                 </span>
-                                {quote?.quotation_number && (
-                                  <span className="text-[10px] text-gray-400 block font-mono">
-                                    Quote: {quote.quotation_number}
-                                  </span>
-                                )}
-                              </td>
+                              </div>
+                              <div className="text-right">
+                                <span className="font-serif font-bold text-[#3d281c] text-base block">
+                                  ₹{Number(ord.amount).toLocaleString("en-IN")}
+                                </span>
+                                <span className="text-[10px] text-emerald-700 bg-emerald-50 px-1.5 py-0.5 rounded font-semibold border border-emerald-200">
+                                  Confirmed Order
+                                </span>
+                              </div>
+                            </div>
 
-                              {/* Customer */}
-                              <td className="px-5 py-4">
-                                <div className="font-medium text-gray-900">
-                                  {req?.full_name || "Customer"}
-                                </div>
-                                {req?.mobile && (
+                            {/* Status & Quick Stage Dropdown */}
+                            <div className="bg-[#faf7f2] p-3 rounded-xl border border-[#ded5c8] space-y-2">
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-gray-500 font-medium">Status:</span>
+                                <span
+                                  className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${getOrderStatusBadgeClasses(
+                                    ord.status
+                                  )}`}
+                                >
+                                  <span
+                                    className={`h-2 w-2 rounded-full ${getOrderStatusDot(
+                                      ord.status
+                                    )}`}
+                                  />
+                                  <span>{ord.status}</span>
+                                </span>
+                              </div>
+
+                              <div>
+                                <label className="text-[11px] text-gray-500 block mb-1">
+                                  Update Stage (syncs live to customer):
+                                </label>
+                                <select
+                                  value={ord.status}
+                                  disabled={updatingOrderId === ord.id}
+                                  onChange={(e) =>
+                                    handleUpdateOrderStatus(ord.id, e.target.value)
+                                  }
+                                  className="w-full text-xs font-medium rounded-lg border border-gray-300 bg-white text-gray-800 px-3 py-2 focus:border-[#7a5235] outline-none shadow-2xs"
+                                >
+                                  <option value="" disabled>Change stage...</option>
+                                  {ALL_ORDER_STATUSES.map((st) => (
+                                    <option key={st} value={st}>
+                                      → {st}
+                                    </option>
+                                  ))}
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Customer, Item & Delivery Details */}
+                            <div className="space-y-1.5 text-xs">
+                              <div className="flex justify-between items-baseline">
+                                <span className="text-gray-500 font-medium">Customer:</span>
+                                <span className="font-semibold text-gray-900">
+                                  {(ord as any).customer_name || req?.full_name || "Customer"}
+                                </span>
+                              </div>
+
+                              {((ord as any).customer_mobile || req?.mobile) && (
+                                <div className="flex justify-between items-center">
+                                  <span className="text-gray-500 font-medium">Phone:</span>
                                   <a
-                                    href={`tel:${req.mobile}`}
-                                    className="text-xs text-[#7a5235] hover:underline flex items-center gap-1 mt-0.5"
+                                    href={`tel:${(ord as any).customer_mobile || req?.mobile}`}
+                                    className="inline-flex items-center gap-1 text-xs text-[#7a5235] font-semibold bg-[#faf7f2] px-2 py-0.5 rounded border border-[#ded5c8]"
                                   >
                                     <span>📞</span>
-                                    <span>{req.mobile}</span>
+                                    <span>{(ord as any).customer_mobile || req?.mobile}</span>
                                   </a>
-                                )}
-                                {req?.email && (
-                                  <a
-                                    href={`mailto:${req.email}`}
-                                    className="text-[11px] text-gray-500 hover:underline block truncate max-w-[180px]"
-                                    title={req.email}
-                                  >
-                                    {req.email}
-                                  </a>
-                                )}
-                              </td>
-
-                              {/* Item & Specs */}
-                              <td className="px-5 py-4">
-                                <div className="font-medium text-gray-800">
-                                  {req?.furniture_type || "Custom Furniture"}
                                 </div>
-                                {req?.catalogue_design_name && (
-                                  <span className="text-xs text-[#7a5235] block">
-                                    {req.catalogue_design_name}
+                              )}
+
+                              <div className="flex justify-between items-baseline">
+                                <span className="text-gray-500 font-medium">Item:</span>
+                                <span className="font-semibold text-[#3d281c] truncate max-w-[200px]">
+                                  {(ord as any).product_name || req?.catalogue_design_name || req?.furniture_type || "Custom Furniture"}
+                                </span>
+                              </div>
+
+                              {(ord.delivery_address || req?.delivery_location) && (
+                                <div className="flex justify-between items-baseline">
+                                  <span className="text-gray-500 font-medium">Delivery:</span>
+                                  <span className="text-gray-700 truncate max-w-[190px]" title={ord.delivery_address || req?.delivery_location || ""}>
+                                    📍 {ord.delivery_address || req?.delivery_location}
                                   </span>
-                                )}
-                                {quote?.drawing_url ? (
+                                </div>
+                              )}
+
+                              <div className="flex justify-between items-baseline">
+                                <span className="text-gray-500 font-medium">Target Delivery:</span>
+                                <span className="text-gray-700 font-medium">
+                                  📅 {formatOrderDate(ord.expected_delivery_date)}
+                                </span>
+                              </div>
+
+                              {quote?.drawing_url && (
+                                <div className="pt-1">
                                   <a
                                     href={quote.drawing_url}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="inline-flex items-center gap-1 text-[11px] text-[#7a5235] hover:underline font-semibold mt-1 bg-[#f5efe6] px-2 py-0.5 rounded"
+                                    className="inline-flex items-center gap-1 text-xs text-[#7a5235] bg-[#f5efe6] px-2.5 py-1 rounded-lg font-semibold border border-[#e7dccd]"
                                   >
                                     <span>📐</span>
-                                    <span>CAD Drawing</span>
+                                    <span>View CAD Drawing</span>
                                   </a>
-                                ) : (
-                                  <span className="text-[11px] text-gray-400 block mt-0.5">
-                                    No CAD attached
-                                  </span>
-                                )}
-                              </td>
-
-                              {/* Delivery */}
-                              <td className="px-5 py-4">
-                                <div className="text-xs text-gray-800 max-w-[200px] truncate" title={ord.delivery_address || req?.delivery_location || ""}>
-                                  📍 {ord.delivery_address || req?.delivery_location || "Not specified"}
                                 </div>
-                                <div className="text-xs text-gray-500 mt-1 flex items-center gap-1">
-                                  <span>📅 Target:</span>
-                                  <span className="font-medium text-gray-700">
-                                    {formatOrderDate(ord.expected_delivery_date)}
-                                  </span>
-                                </div>
-                              </td>
+                              )}
+                            </div>
 
-                              {/* Amount */}
-                              <td className="px-5 py-4 whitespace-nowrap">
-                                <span className="font-serif font-bold text-[#3d281c] text-base">
-                                  ₹{Number(ord.amount).toLocaleString("en-IN")}
-                                </span>
-                              </td>
-
-                              {/* Live Status & Quick Selector */}
-                              <td className="px-5 py-4">
-                                <div className="space-y-1.5">
-                                  <div>
-                                    <span
-                                      className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold border ${getOrderStatusBadgeClasses(
-                                        ord.status
-                                      )}`}
-                                    >
-                                      <span
-                                        className={`h-2 w-2 rounded-full ${getOrderStatusDot(
-                                          ord.status
-                                        )}`}
-                                      />
-                                      <span>{ord.status}</span>
-                                    </span>
-                                  </div>
-
-                                  {/* Quick Stage Dropdown */}
-                                  <select
-                                    value={ord.status}
-                                    disabled={updatingOrderId === ord.id}
-                                    onChange={(e) =>
-                                      handleUpdateOrderStatus(ord.id, e.target.value)
-                                    }
-                                    className="text-xs font-medium rounded-lg border border-gray-300 bg-white text-gray-800 px-2.5 py-1 focus:border-[#7a5235] outline-none shadow-xs cursor-pointer hover:border-[#7a5235] transition disabled:opacity-50"
-                                  >
-                                    <option value="" disabled>Change stage...</option>
-                                    {ALL_ORDER_STATUSES.map((st) => (
-                                      <option key={st} value={st}>
-                                        → {st}
-                                      </option>
-                                    ))}
-                                  </select>
-                                </div>
-                              </td>
-
-                              {/* Action */}
-                              <td className="px-5 py-4 whitespace-nowrap">
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setSelectedOrderDetails(ord);
-                                    setEditingDeliveryDate(
-                                      ord.expected_delivery_date
-                                        ? ord.expected_delivery_date.split("T")[0]
-                                        : ""
-                                    );
-                                  }}
-                                  className="rounded-lg bg-[#3d281c] text-white px-3.5 py-2 text-xs font-medium hover:bg-[#5a3927] transition flex items-center gap-1.5 shadow-xs"
-                                >
-                                  <span>🔍</span>
-                                  <span>Track & Details</span>
-                                </button>
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
+                            {/* Card Action */}
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSelectedOrderDetails(ord);
+                                setEditingDeliveryDate(
+                                  ord.expected_delivery_date
+                                    ? ord.expected_delivery_date.split("T")[0]
+                                    : ""
+                                );
+                              }}
+                              className="w-full rounded-xl bg-[#3d281c] text-white py-2.5 text-xs font-semibold hover:bg-[#5a3927] transition flex items-center justify-center gap-2 shadow-xs"
+                            >
+                              <span>🔍</span>
+                              <span>Track & Full Order Details</span>
+                            </button>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </>
                 );
               })()}
             </div>
@@ -3265,12 +3771,23 @@ export default function AdminDashboard() {
 
                 <button
                   type="button"
-                  onClick={() => setShowAddAdminModal(true)}
+                  onClick={() => {
+                    setCreateUserForm({
+                      full_name: "",
+                      email: "",
+                      mobile: "",
+                      password: "",
+                      is_admin: false,
+                    });
+                    setCreateUserError("");
+                    setShowCreateUserModal(true);
+                  }}
                   className="inline-flex items-center gap-2 rounded-xl bg-[#3d281c] px-4 py-2.5 text-xs font-semibold text-white hover:bg-[#5a3927] transition shadow-xs"
                 >
-                  <span>👑</span>
-                  <span>+ Promote / Add Admin</span>
+                  <span>👤</span>
+                  <span>+ Create User</span>
                 </button>
+
               </div>
             </div>
 
@@ -3594,6 +4111,16 @@ export default function AdminDashboard() {
                                       <span>👁️ Details</span>
                                     </button>
 
+                                    {/* Edit User Details */}
+                                    <button
+                                      type="button"
+                                      onClick={() => handleOpenEditModal(user)}
+                                      className="rounded-lg bg-white border border-[#ded5c8] px-2.5 py-1.5 text-xs font-semibold text-[#7a5235] hover:bg-[#faf7f2] transition"
+                                      title="Edit user details"
+                                    >
+                                      <span>✏️ Edit</span>
+                                    </button>
+
                                     {/* Role Toggle */}
                                     <button
                                       type="button"
@@ -3699,13 +4226,21 @@ export default function AdminDashboard() {
                             </div>
 
                             {/* Mobile Actions */}
-                            <div className="grid grid-cols-3 gap-2 pt-1">
+                            <div className="grid grid-cols-4 gap-1.5 pt-1">
                               <button
                                 type="button"
                                 onClick={() => setSelectedUserDetails(user)}
                                 className="py-2 text-center rounded-lg bg-[#faf7f2] border border-[#ded5c8] text-xs font-semibold text-gray-700 hover:bg-[#f0e8dc] transition"
                               >
-                                👁️ Details
+                                👁️ View
+                              </button>
+
+                              <button
+                                type="button"
+                                onClick={() => handleOpenEditModal(user)}
+                                className="py-2 text-center rounded-lg bg-white border border-[#ded5c8] text-xs font-semibold text-[#7a5235] hover:bg-[#faf7f2] transition"
+                              >
+                                ✏️ Edit
                               </button>
 
                               <button
@@ -3717,7 +4252,7 @@ export default function AdminDashboard() {
                                     : "bg-[#3d281c] text-white"
                                 }`}
                               >
-                                {user.is_admin ? "Demote" : "👑 Promote"}
+                                {user.is_admin ? "Demote" : "👑 Admin"}
                               </button>
 
                               <button
@@ -3730,7 +4265,7 @@ export default function AdminDashboard() {
                                     : "bg-rose-50 text-rose-700 border border-rose-200"
                                 }`}
                               >
-                                🗑️ Delete
+                                🗑️ Del
                               </button>
                             </div>
                           </div>
@@ -3756,33 +4291,33 @@ export default function AdminDashboard() {
             </div>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-[#e7dccd]">
-            <p className="text-sm text-gray-500">
+        <div className="grid grid-cols-3 gap-2.5 sm:gap-5 mb-6 sm:mb-8">
+          <div className="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-[#e7dccd]">
+            <p className="text-[11px] sm:text-sm text-gray-500 font-medium">
               Total Requests
             </p>
 
-            <p className="text-3xl font-semibold text-[#3d281c] mt-2">
+            <p className="text-xl sm:text-3xl font-semibold text-[#3d281c] mt-1 sm:mt-2">
               {requests.length}
             </p>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-[#e7dccd]">
-            <p className="text-sm text-gray-500">
-              New Requests
+          <div className="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-[#e7dccd]">
+            <p className="text-[11px] sm:text-sm text-amber-700 font-medium">
+              New
             </p>
 
-            <p className="text-3xl font-semibold text-[#3d281c] mt-2">
+            <p className="text-xl sm:text-3xl font-semibold text-amber-800 mt-1 sm:mt-2">
               {newRequests}
             </p>
           </div>
 
-          <div className="bg-white rounded-xl p-6 shadow-sm border border-[#e7dccd]">
-            <p className="text-sm text-gray-500">
+          <div className="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-[#e7dccd]">
+            <p className="text-[11px] sm:text-sm text-emerald-700 font-medium">
               In Progress
             </p>
 
-            <p className="text-3xl font-semibold text-[#3d281c] mt-2">
+            <p className="text-xl sm:text-3xl font-semibold text-emerald-800 mt-1 sm:mt-2">
               {inProgressRequests}
             </p>
           </div>
@@ -3806,15 +4341,15 @@ export default function AdminDashboard() {
 
         {/* Requests */}
         <div className="bg-white rounded-xl shadow-sm border border-[#e7dccd] overflow-hidden">
-          <div className="px-6 py-5 border-b border-gray-200 flex items-center justify-between">
-            <h3 className="text-xl font-semibold text-[#3d281c]">
+          <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 flex items-center justify-between">
+            <h3 className="text-base sm:text-xl font-semibold text-[#3d281c]">
               Custom Furniture Requests
             </h3>
 
             <button
               onClick={loadRequests}
               disabled={loading}
-              className="text-sm px-4 py-2 rounded-lg border border-[#7a5235] text-[#7a5235] hover:bg-[#f5efe6] disabled:opacity-50"
+              className="text-xs sm:text-sm px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-[#7a5235] text-[#7a5235] hover:bg-[#f5efe6] disabled:opacity-50"
             >
               {loading ? "Refreshing..." : "Refresh"}
             </button>
@@ -3829,186 +4364,301 @@ export default function AdminDashboard() {
               No customer requests found.
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead className="bg-[#faf7f2]">
-                  <tr>
-                    <th className="text-left px-6 py-4">
-                      Request ID
-                    </th>
+            <>
+              {/* Desktop Table View */}
+              <div className="hidden lg:block overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead className="bg-[#faf7f2]">
+                    <tr>
+                      <th className="text-left px-6 py-4">Request ID</th>
+                      <th className="text-left px-6 py-4">Customer</th>
+                      <th className="text-left px-6 py-4">Furniture</th>
+                      <th className="text-left px-6 py-4">Material</th>
+                      <th className="text-left px-6 py-4">Location</th>
+                      <th className="text-left px-6 py-4">Status</th>
+                      <th className="text-left px-6 py-4">Date</th>
+                      <th className="text-left px-6 py-4">Action</th>
+                    </tr>
+                  </thead>
 
-                    <th className="text-left px-6 py-4">
-                      Customer
-                    </th>
+                  <tbody>
+                    {requests.map((request) => {
+                      const quotation = quotations[request.id];
+                      const canCreateQuotation =
+                        !quotation ||
+                        quotation.status === "Rejected" ||
+                        quotation.status === "Expired";
 
-                    <th className="text-left px-6 py-4">
-                      Furniture
-                    </th>
+                      return (
+                        <tr
+                          key={request.id}
+                          className="border-t border-gray-100 hover:bg-[#faf7f2]"
+                        >
+                          <td className="px-6 py-4 font-medium text-[#7a5235]">
+                            {request.request_id}
+                          </td>
 
-                    <th className="text-left px-6 py-4">
-                      Material
-                    </th>
-
-                    <th className="text-left px-6 py-4">
-                      Location
-                    </th>
-
-                    <th className="text-left px-6 py-4">
-                      Status
-                    </th>
-
-                    <th className="text-left px-6 py-4">
-                      Date
-                    </th>
-
-                    <th className="text-left px-6 py-4">
-                      Action
-                    </th>
-                  </tr>
-                </thead>
-
-                <tbody>
-                  {requests.map((request) => {
-                    const quotation = quotations[request.id];
-
-                    const canCreateQuotation =
-                      !quotation ||
-                      quotation.status === "Rejected" ||
-                      quotation.status === "Expired";
-
-                    return (
-                      <tr
-                        key={request.id}
-                        className="border-t border-gray-100 hover:bg-[#faf7f2]"
-                      >
-                        <td className="px-6 py-4 font-medium text-[#7a5235]">
-                          {request.request_id}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <div className="font-medium text-gray-900">
-                            {request.full_name}
-                          </div>
-
-                          <div className="text-gray-500">
-                            {request.mobile}
-                          </div>
-
-                          {request.email && (
-                            <div className="text-gray-400 text-xs">
-                              {request.email}
+                          <td className="px-6 py-4">
+                            <div className="font-medium text-gray-900">
+                              {request.full_name}
                             </div>
-                          )}
-                        </td>
+                            <div className="text-gray-500">{request.mobile}</div>
+                            {request.email && (
+                              <div className="text-gray-400 text-xs">{request.email}</div>
+                            )}
+                          </td>
 
-                        <td className="px-6 py-4">
-                          <div className="font-medium text-gray-900">
-                            {request.furniture_type}
-                          </div>
-                          {(request.length || request.width || request.height) && (
-                            <div className="text-xs text-[#7a5235] font-mono mt-0.5">
-                              📐 {[
+                          <td className="px-6 py-4">
+                            <div className="font-medium text-gray-900">
+                              {request.furniture_type}
+                            </div>
+                            {(request.length || request.width || request.height) && (
+                              <div className="text-xs text-[#7a5235] font-mono mt-0.5">
+                                📐 {[
+                                  request.length ? `L:${request.length}` : null,
+                                  request.width ? `W:${request.width}` : null,
+                                  request.height ? `H:${request.height}` : null,
+                                ].filter(Boolean).join(" × ")}
+                              </div>
+                            )}
+                          </td>
+
+                          <td className="px-6 py-4">
+                            {request.preferred_material || "-"}
+                          </td>
+
+                          <td className="px-6 py-4">
+                            {request.delivery_location || "-"}
+                          </td>
+
+                          <td className="px-6 py-4">
+                            <div className="flex flex-col gap-1.5 items-start">
+                              <span
+                                className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getStatusClasses(
+                                  request.status
+                                )}`}
+                              >
+                                {request.status}
+                              </span>
+                              {(() => {
+                                const relatedOrder = ordersList.find(
+                                  (o) => o.request_id === request.id
+                                );
+                                if (!relatedOrder) return null;
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setActiveTab("orders");
+                                      setSelectedOrderDetails(relatedOrder);
+                                      setEditingDeliveryDate(
+                                        relatedOrder.expected_delivery_date
+                                          ? relatedOrder.expected_delivery_date.split("T")[0]
+                                          : ""
+                                      );
+                                    }}
+                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full transition shadow-2xs"
+                                    title="View order tracking in Orders tab"
+                                  >
+                                    📦 Order: {relatedOrder.status} →
+                                  </button>
+                                );
+                              })()}
+                            </div>
+                          </td>
+
+                          <td className="px-6 py-4 whitespace-nowrap">
+                            {new Date(request.created_at).toLocaleDateString("en-IN")}
+                          </td>
+
+                          <td className="px-6 py-4">
+                            <div className="flex items-center gap-2">
+                              {canCreateQuotation ? (
+                                <button
+                                  onClick={() => openCreateQuotation(request)}
+                                  className="whitespace-nowrap rounded-lg bg-[#5a3927] text-white px-3 py-1.5 text-xs font-medium hover:bg-[#432a1e] transition"
+                                >
+                                  {quotation ? "New Quotation" : "Create Quotation"}
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => openViewQuotation(request, quotation)}
+                                  className="whitespace-nowrap rounded-lg border border-[#7a5235] text-[#7a5235] px-3 py-1.5 text-xs font-medium hover:bg-[#f5efe6] transition"
+                                >
+                                  View Quotation
+                                </button>
+                              )}
+
+                              <button
+                                type="button"
+                                onClick={() => handleDeleteRequest(request)}
+                                className="whitespace-nowrap rounded-lg text-xs font-medium text-red-600 hover:text-red-800 hover:bg-red-50 px-2.5 py-1.5 transition border border-red-200"
+                                title={`Delete request ${request.request_id}`}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+
+              {/* Mobile Card View */}
+              <div className="lg:hidden p-3 space-y-3 bg-[#faf7f2]/50">
+                {requests.map((request) => {
+                  const quotation = quotations[request.id];
+                  const canCreateQuotation =
+                    !quotation ||
+                    quotation.status === "Rejected" ||
+                    quotation.status === "Expired";
+                  const relatedOrder = ordersList.find(
+                    (o) => o.request_id === request.id
+                  );
+
+                  return (
+                    <div
+                      key={request.id}
+                      className="bg-white rounded-2xl p-4 border border-[#e7dccd] shadow-2xs space-y-3 text-left"
+                    >
+                      {/* Top Header */}
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono font-bold text-xs text-[#7a5235] bg-[#f5efe6] px-2 py-0.5 rounded-md border border-[#e7dccd]">
+                            {request.request_id}
+                          </span>
+                          <span className="text-[11px] text-gray-400">
+                            {new Date(request.created_at).toLocaleDateString("en-IN", {
+                              day: "2-digit",
+                              month: "short",
+                            })}
+                          </span>
+                        </div>
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${getStatusClasses(
+                            request.status
+                          )}`}
+                        >
+                          {request.status}
+                        </span>
+                      </div>
+
+                      {/* Customer Info */}
+                      <div className="pt-1 border-t border-gray-100">
+                        <p className="font-semibold text-gray-900 text-sm">
+                          {request.full_name}
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          {request.mobile && (
+                            <a
+                              href={`tel:${request.mobile}`}
+                              className="inline-flex items-center gap-1 text-xs text-[#7a5235] font-semibold bg-[#faf7f2] px-2.5 py-1 rounded-lg border border-[#ded5c8]"
+                            >
+                              <span>📞</span>
+                              <span>{request.mobile}</span>
+                            </a>
+                          )}
+                          {request.email && (
+                            <a
+                              href={`mailto:${request.email}`}
+                              className="inline-flex items-center gap-1 text-[11px] text-gray-600 max-w-[170px] truncate bg-[#faf7f2] px-2 py-1 rounded-lg border border-[#ded5c8]"
+                              title={request.email}
+                            >
+                              <span>✉️</span>
+                              <span className="truncate">{request.email}</span>
+                            </a>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Design & Specifications */}
+                      <div className="bg-[#faf7f2] rounded-xl p-3 border border-[#ded5c8] space-y-1.5 text-xs">
+                        <div className="flex justify-between items-baseline">
+                          <span className="text-gray-500 font-medium">Item:</span>
+                          <span className="font-semibold text-[#3d281c]">{request.furniture_type}</span>
+                        </div>
+                        {(request.length || request.width || request.height) && (
+                          <div className="flex justify-between items-baseline">
+                            <span className="text-gray-500 font-medium">Dimensions:</span>
+                            <span className="font-mono text-[#7a5235] font-semibold">
+                              {[
                                 request.length ? `L:${request.length}` : null,
                                 request.width ? `W:${request.width}` : null,
                                 request.height ? `H:${request.height}` : null,
                               ].filter(Boolean).join(" × ")}
-                            </div>
-                          )}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          {request.preferred_material || "-"}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          {request.delivery_location || "-"}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <div className="flex flex-col gap-1.5 items-start">
-                            <span
-                              className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getStatusClasses(
-                                request.status
-                              )}`}
-                            >
-                              {request.status}
                             </span>
-                            {(() => {
-                              const relatedOrder = ordersList.find(
-                                (o) => o.request_id === request.id
-                              );
-                              if (!relatedOrder) return null;
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => {
-                                    setActiveTab("orders");
-                                    setSelectedOrderDetails(relatedOrder);
-                                    setEditingDeliveryDate(
-                                      relatedOrder.expected_delivery_date
-                                        ? relatedOrder.expected_delivery_date.split("T")[0]
-                                        : ""
-                                    );
-                                  }}
-                                  className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full transition shadow-2xs"
-                                  title="View order tracking in Orders tab"
-                                >
-                                  📦 Order: {relatedOrder.status} →
-                                </button>
-                              );
-                            })()}
                           </div>
-                        </td>
-
-                        <td className="px-6 py-4 whitespace-nowrap">
-                          {new Date(
-                            request.created_at
-                          ).toLocaleDateString("en-IN")}
-                        </td>
-
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            {canCreateQuotation ? (
-                              <button
-                                onClick={() =>
-                                  openCreateQuotation(request)
-                                }
-                                className="whitespace-nowrap rounded-lg bg-[#5a3927] text-white px-3 py-1.5 text-xs font-medium hover:bg-[#432a1e] transition"
-                              >
-                                {quotation
-                                  ? "New Quotation"
-                                  : "Create Quotation"}
-                              </button>
-                            ) : (
-                              <button
-                                onClick={() =>
-                                  openViewQuotation(
-                                    request,
-                                    quotation
-                                  )
-                                }
-                                className="whitespace-nowrap rounded-lg border border-[#7a5235] text-[#7a5235] px-3 py-1.5 text-xs font-medium hover:bg-[#f5efe6] transition"
-                              >
-                                View Quotation
-                              </button>
-                            )}
-
-                            <button
-                              type="button"
-                              onClick={() => handleDeleteRequest(request)}
-                              className="whitespace-nowrap rounded-lg text-xs font-medium text-red-600 hover:text-red-800 hover:bg-red-50 px-2.5 py-1.5 transition border border-red-200"
-                              title={`Delete request ${request.request_id}`}
-                            >
-                              Delete
-                            </button>
+                        )}
+                        <div className="flex justify-between items-baseline">
+                          <span className="text-gray-500 font-medium">Material:</span>
+                          <span className="text-gray-700">{request.preferred_material || "Not specified"}</span>
+                        </div>
+                        <div className="flex justify-between items-baseline">
+                          <span className="text-gray-500 font-medium">Location:</span>
+                          <span className="text-gray-700 truncate max-w-[180px]">{request.delivery_location || "Not specified"}</span>
+                        </div>
+                        {request.requirement && (
+                          <div className="pt-1 border-t border-[#e7dccd]/70 text-[11px] text-gray-600 italic">
+                            &ldquo;{request.requirement.slice(0, 90)}{request.requirement.length > 90 ? "..." : ""}&rdquo;
                           </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                        )}
+                      </div>
+
+                      {/* Related Order pill if any */}
+                      {relatedOrder && (
+                        <div>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setActiveTab("orders");
+                              setSelectedOrderDetails(relatedOrder);
+                              setEditingDeliveryDate(
+                                relatedOrder.expected_delivery_date
+                                  ? relatedOrder.expected_delivery_date.split("T")[0]
+                                  : ""
+                              );
+                            }}
+                            className="w-full inline-flex items-center justify-between text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-xl transition"
+                          >
+                            <span>📦 Order: {relatedOrder.order_number}</span>
+                            <span>{relatedOrder.status} →</span>
+                          </button>
+                        </div>
+                      )}
+
+                      {/* Card Action Buttons */}
+                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-gray-100">
+                        {canCreateQuotation ? (
+                          <button
+                            onClick={() => openCreateQuotation(request)}
+                            className="w-full rounded-xl bg-[#5a3927] text-white py-2 text-xs font-semibold hover:bg-[#432a1e] transition shadow-xs text-center"
+                          >
+                            {quotation ? "+ New Quote" : "+ Create Quote"}
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => openViewQuotation(request, quotation)}
+                            className="w-full rounded-xl border border-[#7a5235] text-[#7a5235] py-2 text-xs font-semibold hover:bg-[#f5efe6] transition text-center"
+                          >
+                            👁️ View Quote
+                          </button>
+                        )}
+
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteRequest(request)}
+                          className="w-full rounded-xl text-xs font-semibold text-red-600 hover:text-red-800 hover:bg-red-50 py-2 transition border border-red-200 text-center"
+                        >
+                          🗑️ Delete
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </>
           )}
         </div>
         </>
@@ -4017,14 +4667,14 @@ export default function AdminDashboard() {
 
       {/* Quotation Modal */}
       {selectedRequest && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl max-h-[92vh] overflow-y-auto">
 
             {/* Modal Header */}
-            <div className="border-b border-gray-200 px-6 py-5">
-              <div className="flex items-start justify-between gap-4">
+            <div className="border-b border-gray-200 px-4 sm:px-6 py-4 sm:py-5">
+              <div className="flex items-start justify-between gap-3">
                 <div>
-                  <h3 className="text-2xl font-serif font-semibold text-[#3d281c]">
+                  <h3 className="text-xl sm:text-2xl font-serif font-semibold text-[#3d281c]">
                     {quotationMode === "view"
                       ? "Quotation Details"
                       : selectedQuotation
@@ -4032,7 +4682,7 @@ export default function AdminDashboard() {
                       : "Create Quotation"}
                   </h3>
 
-                  <p className="text-sm text-gray-500 mt-1">
+                  <p className="text-xs sm:text-sm text-gray-500 mt-1">
                     Request: {selectedRequest.request_id}
                   </p>
                 </div>
@@ -4046,7 +4696,7 @@ export default function AdminDashboard() {
                     title="Delete this custom request"
                   >
                     <span>🗑️</span>
-                    <span>Delete</span>
+                    <span className="hidden sm:inline">Delete</span>
                   </button>
                   <button
                     onClick={closeQuotation}
@@ -4062,7 +4712,7 @@ export default function AdminDashboard() {
 
             {/* View Existing Quotation */}
             {quotationMode === "view" && selectedQuotation ? (
-              <div className="px-6 py-6 space-y-5">
+              <div className="px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-5">
 
                 {/* Customer */}
                 <div className="rounded-lg bg-[#faf7f2] p-4">
@@ -4460,15 +5110,15 @@ export default function AdminDashboard() {
 
       {/* Edit Product Modal */}
       {editingProduct && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 px-4">
-          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl max-h-[90vh] overflow-y-auto">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-3 sm:px-4">
+          <div className="w-full max-w-lg rounded-2xl bg-white shadow-2xl max-h-[92vh] overflow-y-auto">
             {/* Modal Header */}
-            <div className="border-b border-gray-200 px-6 py-5 flex items-center justify-between">
+            <div className="border-b border-gray-200 px-4 sm:px-6 py-4 sm:py-5 flex items-center justify-between">
               <div>
-                <h3 className="text-xl font-serif font-semibold text-[#3d281c]">
+                <h3 className="text-lg sm:text-xl font-serif font-semibold text-[#3d281c]">
                   Edit Product
                 </h3>
-                <p className="text-xs text-gray-500 mt-0.5">
+                <p className="text-xs text-gray-500 mt-0.5 truncate max-w-[200px]">
                   ID: {editingProduct.id}
                 </p>
               </div>
@@ -4481,7 +5131,7 @@ export default function AdminDashboard() {
             </div>
 
             {/* Modal Body / Form */}
-            <form onSubmit={handleUpdateProduct} className="p-6 space-y-4">
+            <form onSubmit={handleUpdateProduct} className="p-4 sm:p-6 space-y-4">
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">
                   Product Name *
@@ -4497,7 +5147,7 @@ export default function AdminDashboard() {
                 />
               </div>
 
-              <div className="grid grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-4">
                 <div>
                   <div className="flex items-center justify-between mb-1">
                     <label className="block text-sm font-medium text-gray-700">
@@ -4680,18 +5330,18 @@ export default function AdminDashboard() {
 
       {/* Comprehensive Order Details & Live Tracking Modal */}
       {selectedOrderDetails && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs px-4 py-6 overflow-y-auto">
-          <div className="w-full max-w-3xl rounded-2xl bg-white shadow-2xl border border-[#ded5c8] overflow-hidden my-auto max-h-[92vh] flex flex-col">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-3 sm:p-6 overflow-y-auto">
+          <div className="w-full max-w-3xl rounded-2xl sm:rounded-3xl bg-white shadow-2xl border border-[#ded5c8] overflow-hidden my-auto max-h-[94vh] flex flex-col">
 
             {/* Modal Header */}
-            <div className="border-b border-[#ded5c8] bg-[#fbf9f6] px-6 py-5 flex items-start justify-between gap-4 shrink-0">
+            <div className="border-b border-[#ded5c8] bg-[#fbf9f6] px-4 sm:px-6 py-3.5 sm:py-5 flex items-start justify-between gap-3 shrink-0">
               <div>
-                <div className="flex items-center gap-3">
-                  <span className="font-mono text-lg font-bold text-[#7a5235]">
+                <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+                  <span className="font-mono text-base sm:text-lg font-bold text-[#7a5235]">
                     {selectedOrderDetails.order_number}
                   </span>
                   <span
-                    className={`inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full text-xs font-semibold border ${getOrderStatusBadgeClasses(
+                    className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-semibold border ${getOrderStatusBadgeClasses(
                       selectedOrderDetails.status
                     )}`}
                   >
@@ -4703,8 +5353,8 @@ export default function AdminDashboard() {
                     <span>{selectedOrderDetails.status}</span>
                   </span>
                 </div>
-                <p className="text-xs text-gray-500 mt-1">
-                  Placed on {formatOrderDate(selectedOrderDetails.created_at)} • Total Order Value: ₹{Number(selectedOrderDetails.amount).toLocaleString("en-IN")}
+                <p className="text-[11px] sm:text-xs text-gray-500 mt-1">
+                  Placed on {formatOrderDate(selectedOrderDetails.created_at)} • Total Value: ₹{Number(selectedOrderDetails.amount).toLocaleString("en-IN")}
                 </p>
               </div>
 
@@ -4720,7 +5370,7 @@ export default function AdminDashboard() {
             </div>
 
             {/* Modal Body */}
-            <div className="p-6 overflow-y-auto space-y-6">
+            <div className="p-4 sm:p-6 overflow-y-auto space-y-4 sm:space-y-6">
               {/* Live Customer Portal Stepper */}
               <div className="bg-[#faf7f2] rounded-2xl p-5 border border-[#e7dccd]">
                 <div className="flex items-center justify-between mb-4">
@@ -4999,11 +5649,11 @@ export default function AdminDashboard() {
             </div>
 
             {/* Modal Footer */}
-            <div className="border-t border-[#ded5c8] bg-[#fbf9f6] px-6 py-4 flex items-center justify-end gap-3 shrink-0">
+            <div className="border-t border-[#ded5c8] bg-[#fbf9f6] px-4 sm:px-6 py-3.5 sm:py-4 flex items-center justify-end gap-3 shrink-0">
               <button
                 type="button"
                 onClick={() => setSelectedOrderDetails(null)}
-                className="px-5 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-100 transition"
+                className="w-full sm:w-auto px-5 py-2.5 rounded-xl border border-gray-300 bg-white text-sm font-semibold text-gray-700 hover:bg-gray-100 transition shadow-2xs"
               >
                 Close
               </button>
@@ -5059,14 +5709,24 @@ export default function AdminDashboard() {
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setSelectedUserDetails(null)}
-                className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-800 transition"
-                title="Close"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleOpenEditModal(selectedUserDetails)}
+                  className="rounded-xl border border-[#ded5c8] bg-white px-3 py-1.5 text-xs font-semibold text-[#7a5235] hover:bg-[#faf7f2] transition flex items-center gap-1.5 shadow-2xs"
+                >
+                  <span>✏️</span>
+                  <span>Edit Profile</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setSelectedUserDetails(null)}
+                  className="w-9 h-9 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-800 transition"
+                  title="Close"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
             {/* Modal Scrollable Body */}
@@ -5367,6 +6027,428 @@ export default function AdminDashboard() {
                 >
                   {addAdminLoading && <span className="animate-spin text-sm">⏳</span>}
                   <span>Grant Admin Access</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Create New User Modal */}
+      {showCreateUserModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl border border-[#ded5c8] shadow-2xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-auto">
+            {/* Header */}
+            <div className="border-b border-[#ded5c8] px-6 py-4 flex items-center justify-between bg-[#faf7f2]">
+              <div className="flex items-center gap-2.5">
+                <div className="w-8 h-8 rounded-full bg-[#f5efe6] flex items-center justify-center text-[#7a5235] font-bold text-sm">
+                  👤
+                </div>
+                <div>
+                  <h3 className="font-serif font-bold text-lg text-[#3d281c]">
+                    Create New User Account
+                  </h3>
+                  <p className="text-xs text-gray-500">
+                    Add a customer or administrator directly to Gavika Furnitech
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowCreateUserModal(false);
+                  setCreateUserError("");
+                }}
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-800 transition text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleCreateUser} className="p-6 space-y-4">
+              {createUserError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-start gap-2">
+                  <span className="text-base shrink-0">⚠️</span>
+                  <span className="flex-1 font-medium">{createUserError}</span>
+                </div>
+              )}
+
+              {/* Full Name */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                  Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={createUserForm.full_name}
+                  onChange={(e) =>
+                    setCreateUserForm((prev) => ({ ...prev, full_name: e.target.value }))
+                  }
+                  placeholder="e.g. Rahul Sharma"
+                  className="w-full rounded-xl border border-gray-300 bg-[#faf7f2] px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-[#7a5235] focus:bg-white transition"
+                />
+              </div>
+
+              {/* Email & Mobile */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                    Email Address *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={createUserForm.email}
+                    onChange={(e) =>
+                      setCreateUserForm((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                    placeholder="name@domain.com"
+                    className="w-full rounded-xl border border-gray-300 bg-[#faf7f2] px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-[#7a5235] focus:bg-white transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                    Mobile Number
+                  </label>
+                  <input
+                    type="tel"
+                    value={createUserForm.mobile}
+                    onChange={(e) =>
+                      setCreateUserForm((prev) => ({ ...prev, mobile: e.target.value }))
+                    }
+                    placeholder="e.g. 9876543210"
+                    className="w-full rounded-xl border border-gray-300 bg-[#faf7f2] px-4 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-[#7a5235] focus:bg-white transition"
+                  />
+                </div>
+              </div>
+
+              {/* Password */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                  Temporary Password *
+                </label>
+                <div className="relative">
+                  <input
+                    type={showCreatePassword ? "text" : "password"}
+                    required
+                    minLength={6}
+                    value={createUserForm.password}
+                    onChange={(e) =>
+                      setCreateUserForm((prev) => ({ ...prev, password: e.target.value }))
+                    }
+                    placeholder="At least 6 characters"
+                    className="w-full rounded-xl border border-gray-300 bg-[#faf7f2] pl-4 pr-12 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-[#7a5235] focus:bg-white transition"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowCreatePassword(!showCreatePassword)}
+                    className="absolute inset-y-0 right-3 flex items-center text-xs text-gray-500 hover:text-gray-800"
+                  >
+                    {showCreatePassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  The user can sign in immediately with this email and password.
+                </p>
+              </div>
+
+              {/* Role Selection */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">
+                  Account Role
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label
+                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${
+                      !createUserForm.is_admin
+                        ? "border-[#3d281c] bg-[#faf7f2] ring-1 ring-[#3d281c]"
+                        : "border-gray-200 bg-white hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-semibold text-xs text-gray-900 flex items-center gap-1.5">
+                        <span>👤</span>
+                        <span>Customer</span>
+                      </span>
+                      <input
+                        type="radio"
+                        name="create_role"
+                        checked={!createUserForm.is_admin}
+                        onChange={() =>
+                          setCreateUserForm((prev) => ({ ...prev, is_admin: false }))
+                        }
+                        className="accent-[#3d281c]"
+                      />
+                    </div>
+                    <span className="text-[11px] text-gray-500 leading-snug">
+                      Orders & custom requests
+                    </span>
+                  </label>
+
+                  <label
+                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${
+                      createUserForm.is_admin
+                        ? "border-amber-600 bg-amber-50/70 ring-1 ring-amber-600"
+                        : "border-gray-200 bg-white hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-semibold text-xs text-amber-900 flex items-center gap-1.5">
+                        <span>👑</span>
+                        <span>Administrator</span>
+                      </span>
+                      <input
+                        type="radio"
+                        name="create_role"
+                        checked={createUserForm.is_admin}
+                        onChange={() =>
+                          setCreateUserForm((prev) => ({ ...prev, is_admin: true }))
+                        }
+                        className="accent-amber-700"
+                      />
+                    </div>
+                    <span className="text-[11px] text-gray-500 leading-snug">
+                      Full dashboard & catalog access
+                    </span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Footer */}
+              <div className="pt-3 border-t border-gray-100 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowCreateUserModal(false);
+                    setCreateUserError("");
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={createUserLoading}
+                  className="px-5 py-2.5 rounded-xl bg-[#3d281c] text-white text-xs font-semibold hover:bg-[#5a3927] transition shadow-xs disabled:opacity-50 flex items-center gap-2"
+                >
+                  {createUserLoading && <span className="animate-spin text-sm">⏳</span>}
+                  <span>Create Account</span>
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* Edit User Details Modal */}
+      {editingUser && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 overflow-y-auto">
+          <div className="bg-white rounded-3xl border border-[#ded5c8] shadow-2xl max-w-lg w-full overflow-hidden animate-in fade-in zoom-in-95 duration-150 my-auto">
+            {/* Header */}
+            <div className="border-b border-[#ded5c8] px-6 py-4 flex items-center justify-between bg-[#faf7f2]">
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
+                    editingUser.is_admin
+                      ? "bg-amber-100 text-amber-900 border border-amber-300"
+                      : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
+                  }`}
+                >
+                  {(editingUser.full_name || editingUser.email || "U")
+                    .split(" ")
+                    .map((n) => n[0])
+                    .slice(0, 2)
+                    .join("")
+                    .toUpperCase()}
+                </div>
+                <div>
+                  <h3 className="font-serif font-bold text-lg text-[#3d281c]">
+                    Edit User Details
+                  </h3>
+                  <p className="text-xs text-gray-500 font-mono truncate max-w-xs">
+                    ID: {editingUser.id}
+                  </p>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setEditingUser(null);
+                  setEditUserError("");
+                }}
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 flex items-center justify-center text-gray-500 hover:text-gray-800 transition text-sm"
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Form */}
+            <form onSubmit={handleSaveEditUser} className="p-6 space-y-4">
+              {editUserError && (
+                <div className="p-3 rounded-xl bg-rose-50 border border-rose-200 text-xs text-rose-700 flex items-start gap-2">
+                  <span className="text-base shrink-0">⚠️</span>
+                  <span className="flex-1 font-medium">{editUserError}</span>
+                </div>
+              )}
+
+              {/* Full Name */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                  Full Name *
+                </label>
+                <input
+                  type="text"
+                  required
+                  value={editUserForm.full_name}
+                  onChange={(e) =>
+                    setEditUserForm((prev) => ({ ...prev, full_name: e.target.value }))
+                  }
+                  className="w-full rounded-xl border border-gray-300 bg-[#faf7f2] px-4 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:bg-white transition"
+                />
+              </div>
+
+              {/* Email & Mobile */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                    Email Address *
+                  </label>
+                  <input
+                    type="email"
+                    required
+                    value={editUserForm.email}
+                    onChange={(e) =>
+                      setEditUserForm((prev) => ({ ...prev, email: e.target.value }))
+                    }
+                    className="w-full rounded-xl border border-gray-300 bg-[#faf7f2] px-4 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:bg-white transition"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                    Mobile Number
+                  </label>
+                  <input
+                    type="tel"
+                    value={editUserForm.mobile}
+                    onChange={(e) =>
+                      setEditUserForm((prev) => ({ ...prev, mobile: e.target.value }))
+                    }
+                    placeholder="e.g. 9876543210"
+                    className="w-full rounded-xl border border-gray-300 bg-[#faf7f2] px-4 py-2.5 text-sm text-gray-900 outline-none focus:border-[#7a5235] focus:bg-white transition"
+                  />
+                </div>
+              </div>
+
+              {/* Role Selection */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-2">
+                  Account Role
+                </label>
+                <div className="grid grid-cols-2 gap-3">
+                  <label
+                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${
+                      !editUserForm.is_admin
+                        ? "border-[#3d281c] bg-[#faf7f2] ring-1 ring-[#3d281c]"
+                        : "border-gray-200 bg-white hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-semibold text-xs text-gray-900 flex items-center gap-1">
+                        <span>👤</span>
+                        <span>Customer</span>
+                      </span>
+                      <input
+                        type="radio"
+                        name="edit_role"
+                        checked={!editUserForm.is_admin}
+                        onChange={() =>
+                          setEditUserForm((prev) => ({ ...prev, is_admin: false }))
+                        }
+                        className="accent-[#3d281c]"
+                      />
+                    </div>
+                    <span className="text-[11px] text-gray-500">Standard shopper</span>
+                  </label>
+
+                  <label
+                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${
+                      editUserForm.is_admin
+                        ? "border-amber-600 bg-amber-50/70 ring-1 ring-amber-600"
+                        : "border-gray-200 bg-white hover:bg-gray-50"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between mb-1">
+                      <span className="font-semibold text-xs text-amber-900 flex items-center gap-1">
+                        <span>👑</span>
+                        <span>Administrator</span>
+                      </span>
+                      <input
+                        type="radio"
+                        name="edit_role"
+                        checked={editUserForm.is_admin}
+                        onChange={() =>
+                          setEditUserForm((prev) => ({ ...prev, is_admin: true }))
+                        }
+                        className="accent-amber-700"
+                      />
+                    </div>
+                    <span className="text-[11px] text-gray-500">Full dashboard access</span>
+                  </label>
+                </div>
+              </div>
+
+              {/* Optional Password Reset */}
+              <div>
+                <label className="block text-xs font-semibold text-gray-700 uppercase tracking-wider mb-1.5">
+                  Reset Password (Optional)
+                </label>
+                <div className="relative">
+                  <input
+                    type={showEditPassword ? "text" : "password"}
+                    value={editUserForm.newPassword}
+                    onChange={(e) =>
+                      setEditUserForm((prev) => ({ ...prev, newPassword: e.target.value }))
+                    }
+                    placeholder="Leave blank to keep existing password"
+                    minLength={6}
+                    className="w-full rounded-xl border border-gray-300 bg-[#faf7f2] pl-4 pr-12 py-2.5 text-sm text-gray-900 placeholder:text-gray-400 outline-none focus:border-[#7a5235] focus:bg-white transition"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowEditPassword(!showEditPassword)}
+                    className="absolute inset-y-0 right-3 flex items-center text-xs text-gray-500 hover:text-gray-800"
+                  >
+                    {showEditPassword ? "Hide" : "Show"}
+                  </button>
+                </div>
+                <p className="text-[11px] text-gray-400 mt-1">
+                  Only enter a password if you want to override their current password.
+                </p>
+              </div>
+
+              {/* Footer */}
+              <div className="pt-3 border-t border-gray-100 flex items-center justify-end gap-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setEditingUser(null);
+                    setEditUserError("");
+                  }}
+                  className="px-4 py-2.5 rounded-xl border border-gray-300 text-xs font-semibold text-gray-700 hover:bg-gray-100 transition"
+                >
+                  Cancel
+                </button>
+
+                <button
+                  type="submit"
+                  disabled={editUserLoading}
+                  className="px-5 py-2.5 rounded-xl bg-[#3d281c] text-white text-xs font-semibold hover:bg-[#5a3927] transition shadow-xs disabled:opacity-50 flex items-center gap-2"
+                >
+                  {editUserLoading && <span className="animate-spin text-sm">⏳</span>}
+                  <span>Save Changes</span>
                 </button>
               </div>
             </form>

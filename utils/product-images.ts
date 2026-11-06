@@ -106,3 +106,31 @@ export async function deleteProductImagesFromStorage(
   }
 }
 
+/**
+ * Formats a raw price string into Indian Rupees (e.g., "14200" -> "₹14,200")
+ * or returns a formatted badge indicator (e.g. "Coming Soon", "Price on request").
+ */
+export function formatPrice(raw: string | null | undefined): {
+  text: string;
+  isBadge: boolean;
+} {
+  if (!raw) return { text: "Price on request", isBadge: true };
+  const trimmed = raw.trim();
+  if (!trimmed) return { text: "Price on request", isBadge: true };
+  if (trimmed.toLowerCase().includes("coming soon")) {
+    return { text: "Coming Soon", isBadge: true };
+  }
+  if (trimmed.startsWith("₹")) {
+    return { text: trimmed, isBadge: false };
+  }
+  const cleanNum = trimmed.replace(/[^\d.]/g, "");
+  if (cleanNum && !isNaN(Number(cleanNum))) {
+    return {
+      text: `₹${Number(cleanNum).toLocaleString("en-IN")}`,
+      isBadge: false,
+    };
+  }
+  return { text: trimmed, isBadge: true };
+}
+
+

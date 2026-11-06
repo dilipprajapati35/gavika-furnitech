@@ -204,30 +204,137 @@ create policy "Admins and Users can update quotations"
   );
 
 drop policy if exists "Admins can insert quotations" on public.quotations;
-create policy "Admins can insert quotations"
+drop policy if exists "Users and Admins can insert quotations" on public.quotations;
+create policy "Users and Admins can insert quotations"
   on public.quotations for insert
   to authenticated
-  with check (
-    exists (select 1 from public.admin_users where user_id = auth.uid())
-  );
+  with check (true);
 
 -- Orders Policies
 drop policy if exists "Users and Admins can view orders" on public.orders;
 create policy "Users and Admins can view orders"
   on public.orders for select
-  to authenticated
-  using (
-    auth.uid() = user_id or
-    exists (select 1 from public.admin_users where user_id = auth.uid())
-  );
+  to public
+  using (true);
 
 drop policy if exists "Admins can update orders" on public.orders;
 create policy "Admins can update orders"
   on public.orders for update
+  to public
+  using (true);
+
+drop policy if exists "Allow inserting orders" on public.orders;
+create policy "Allow inserting orders"
+  on public.orders for insert
+  to public
+  with check (true);
+
+-- Allow nullable relations on orders for direct online purchases
+alter table public.orders alter column user_id drop not null;
+alter table public.orders alter column request_id drop not null;
+alter table public.orders alter column quotation_id drop not null;
+
+-- Razorpay Payment Columns on orders
+alter table public.orders add column if not exists razorpay_order_id text;
+alter table public.orders add column if not exists razorpay_payment_id text;
+alter table public.orders add column if not exists payment_status text default 'pending';
+alter table public.orders add column if not exists payment_method text;
+
+create index if not exists idx_orders_razorpay_order_id on public.orders(razorpay_order_id);
+create index if not exists idx_orders_razorpay_payment_id on public.orders(razorpay_payment_id);
+
+-- ==============================================================================
+-- Payments Table (Transaction Logs for Razorpay)
+-- ==============================================================================
+create table if not exists public.payments (
+  id uuid default gen_random_uuid() primary key,
+  order_id uuid references public.orders(id) on delete set null,
+  razorpay_payment_id text not null unique,
+  razorpay_order_id text,
+  razorpay_signature text,
+  amount numeric(12, 2) not null,
+  currency text default 'INR',
+  status text not null, -- 'captured', 'failed', 'refunded'
+  method text,          -- 'card', 'upi', 'netbanking', 'wallet'
+  customer_email text,
+  customer_phone text,
+  error_code text,
+  error_description text,
+  raw_response jsonb,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null,
+  updated_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists idx_payments_razorpay_payment_id on public.payments(razorpay_payment_id);
+create index if not exists idx_payments_razorpay_order_id on public.payments(razorpay_order_id);
+
+alter table public.payments enable row level security;
+
+-- Customers can view only their own payment records (or Admins can view all)
+drop policy if exists "Users and Admins can view relevant payments" on public.payments;
+create policy "Users and Admins can view relevant payments"
+  on public.payments for select
+  to authenticated
+  using (
+    exists (
+      select 1 from public.orders o
+      where o.id = payments.order_id
+      and o.user_id = auth.uid()
+    ) or exists (
+      select 1 from public.admin_users au
+      where au.user_id = auth.uid()
+    )
+  );
+
+drop policy if exists "Allow backend insert on payments" on public.payments;
+create policy "Allow backend insert on payments"
+  on public.payments for insert
+  to public
+  with check (true);
+
+drop policy if exists "Allow backend update on payments" on public.payments;
+create policy "Allow backend update on payments"
+  on public.payments for update
+  to public
+  using (true);
+
+-- ==============================================================================
+-- Razorpay Webhook Events Table (Idempotency & Audit Logs)
+-- ==============================================================================
+create table if not exists public.razorpay_webhook_events (
+  id uuid default gen_random_uuid() primary key,
+  event_id text not null unique,
+  event_type text not null,
+  account_id text,
+  payload jsonb not null,
+  processed boolean default false,
+  created_at timestamp with time zone default timezone('utc'::text, now()) not null
+);
+
+create index if not exists idx_razorpay_webhook_events_event_id on public.razorpay_webhook_events(event_id);
+
+alter table public.razorpay_webhook_events enable row level security;
+
+-- Webhook events should never be read by standard users; only Admins can view for audit
+drop policy if exists "Admins can view webhook events" on public.razorpay_webhook_events;
+create policy "Admins can view webhook events"
+  on public.razorpay_webhook_events for select
   to authenticated
   using (
     exists (select 1 from public.admin_users where user_id = auth.uid())
   );
+
+drop policy if exists "Allow backend insert on webhook events" on public.razorpay_webhook_events;
+create policy "Allow backend insert on webhook events"
+  on public.razorpay_webhook_events for insert
+  to public
+  with check (true);
+
+drop policy if exists "Allow backend update on webhook events" on public.razorpay_webhook_events;
+create policy "Allow backend update on webhook events"
+  on public.razorpay_webhook_events for update
+  to public
+  using (true);
 
 -- Furniture Types Policies
 alter table public.furniture_types enable row level security;
@@ -668,9 +775,185 @@ begin
 end;
 $$;
 
+-- Procedure: Create a new user by admin (Customer or Administrator)
+create or replace function public.create_user_by_admin(
+  p_email text,
+  p_password text,
+  p_full_name text,
+  p_mobile text default '',
+  p_is_admin boolean default false
+)
+returns json
+language plpgsql
+security definer
+set search_path = public, auth, extensions
+as $$
+declare
+  v_new_user_id uuid;
+  v_encrypted_pw text;
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'Unauthorized: Only administrators can create new users.';
+  end if;
+
+  if exists (select 1 from auth.users where lower(email) = lower(trim(p_email))) then
+    return json_build_object('success', false, 'message', 'A user with this email address already exists.');
+  end if;
+
+  v_new_user_id := gen_random_uuid();
+  v_encrypted_pw := crypt(trim(p_password), gen_salt('bf'));
+
+  insert into auth.users (
+    instance_id,
+    id,
+    aud,
+    role,
+    email,
+    encrypted_password,
+    email_confirmed_at,
+    raw_app_meta_data,
+    raw_user_meta_data,
+    created_at,
+    updated_at,
+    phone,
+    phone_confirmed_at
+  ) values (
+    '00000000-0000-0000-0000-000000000000',
+    v_new_user_id,
+    'authenticated',
+    'authenticated',
+    lower(trim(p_email)),
+    v_encrypted_pw,
+    now(),
+    '{"provider":"email","providers":["email"]}'::jsonb,
+    json_build_object('full_name', trim(p_full_name), 'mobile', trim(p_mobile))::jsonb,
+    now(),
+    now(),
+    nullif(trim(p_mobile), ''),
+    case when trim(p_mobile) <> '' then now() else null end
+  );
+
+  insert into auth.identities (
+    id,
+    user_id,
+    identity_data,
+    provider,
+    last_sign_in_at,
+    created_at,
+    updated_at
+  ) values (
+    v_new_user_id,
+    v_new_user_id,
+    json_build_object('sub', v_new_user_id::text, 'email', lower(trim(p_email)))::jsonb,
+    'email',
+    now(),
+    now(),
+    now()
+  );
+
+  if p_is_admin then
+    insert into public.admin_users (user_id) values (v_new_user_id)
+    on conflict (user_id) do nothing;
+  end if;
+
+  return json_build_object(
+    'success', true,
+    'message', 'User account created successfully.',
+    'user_id', v_new_user_id
+  );
+exception when others then
+  return json_build_object(
+    'success', false,
+    'message', SQLERRM
+  );
+end;
+$$;
+
+-- Procedure: Update user details by admin
+create or replace function public.update_user_details_by_admin(
+  p_user_id uuid,
+  p_full_name text,
+  p_mobile text,
+  p_email text default null,
+  p_is_admin boolean default null,
+  p_password text default null
+)
+returns json
+language plpgsql
+security definer
+set search_path = public, auth, extensions
+as $$
+declare
+  v_user auth.users%rowtype;
+  v_meta jsonb;
+begin
+  if not exists (select 1 from public.admin_users where user_id = auth.uid()) then
+    raise exception 'Unauthorized: Only administrators can update user details.';
+  end if;
+
+  select * into v_user from auth.users where id = p_user_id;
+  if v_user.id is null then
+    return json_build_object('success', false, 'message', 'User not found.');
+  end if;
+
+  v_meta := coalesce(v_user.raw_user_meta_data, '{}'::jsonb);
+  if p_full_name is not null then
+    v_meta := jsonb_set(v_meta, '{full_name}', to_jsonb(trim(p_full_name)));
+  end if;
+  if p_mobile is not null then
+    v_meta := jsonb_set(v_meta, '{mobile}', to_jsonb(trim(p_mobile)));
+  end if;
+
+  update auth.users
+  set
+    raw_user_meta_data = v_meta,
+    email = coalesce(nullif(trim(p_email), ''), email),
+    phone = coalesce(nullif(trim(p_mobile), ''), phone),
+    encrypted_password = case
+      when p_password is not null and length(trim(p_password)) >= 6
+      then crypt(trim(p_password), gen_salt('bf'))
+      else encrypted_password
+    end,
+    updated_at = now()
+  where id = p_user_id;
+
+  -- Update associated custom_requests so customer records reflect updated info
+  update public.custom_requests
+  set
+    full_name = coalesce(nullif(trim(p_full_name), ''), full_name),
+    mobile = coalesce(nullif(trim(p_mobile), ''), mobile),
+    email = coalesce(nullif(trim(p_email), ''), email)
+  where user_id = p_user_id;
+
+  -- Update admin role if specified
+  if p_is_admin is not null then
+    if p_is_admin then
+      insert into public.admin_users (user_id) values (p_user_id)
+      on conflict (user_id) do nothing;
+    else
+      if p_user_id != auth.uid() or (select count(*) from public.admin_users) > 1 then
+        delete from public.admin_users where user_id = p_user_id;
+      end if;
+    end if;
+  end if;
+
+  return json_build_object(
+    'success', true,
+    'message', 'User details updated successfully.'
+  );
+exception when others then
+  return json_build_object(
+    'success', false,
+    'message', SQLERRM
+  );
+end;
+$$;
+
 -- Grant permissions for user management functions
 grant execute on function public.get_admin_users_list to authenticated;
 grant execute on function public.set_user_admin_role to authenticated;
 grant execute on function public.add_admin_by_email to authenticated;
 grant execute on function public.delete_user_by_admin to authenticated;
 grant execute on function public.delete_custom_request_by_admin to authenticated;
+grant execute on function public.create_user_by_admin to authenticated;
+grant execute on function public.update_user_details_by_admin to authenticated;
