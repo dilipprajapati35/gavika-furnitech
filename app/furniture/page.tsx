@@ -804,21 +804,21 @@ export default function FurniturePage() {
         )}
       </section>
 
-      {/* Product Gallery Modal (High-Res Multi-Image Viewer, Mobile Optimized) */}
+      {/* Product Gallery Modal (High-Res Multi-Image Viewer, Full Uncropped Photo View) */}
       {galleryProduct && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-2.5 sm:p-6"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-md p-2 sm:p-4 md:p-6"
           onClick={() => setGalleryProduct(null)}
         >
           <div
-            className="relative w-full max-w-4xl overflow-hidden rounded-2xl sm:rounded-3xl bg-[#1c1917] text-white shadow-2xl flex flex-col max-h-[94vh] sm:max-h-[92vh]"
+            className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl overflow-hidden rounded-2xl sm:rounded-3xl bg-[#1c1917] text-white shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[95vh] border border-white/10"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 sm:px-6 sm:py-4">
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5 sm:px-6 sm:py-3.5 bg-[#141210]">
               <div className="min-w-0 pr-3">
                 <div className="flex items-center gap-2">
-                  <span className="rounded-full bg-[#8b6f47]/30 border border-[#8b6f47]/50 px-2 py-0.5 text-[10px] sm:text-xs font-medium text-[#d8bd91]">
+                  <span className="rounded-full bg-[#8b6f47]/30 border border-[#8b6f47]/50 px-2.5 py-0.5 text-[10px] sm:text-xs font-medium text-[#d8bd91]">
                     {galleryProduct.product.category}
                   </span>
                   <span className="text-[11px] sm:text-xs text-white/50">
@@ -826,22 +826,43 @@ export default function FurniturePage() {
                     {galleryProduct.product.images?.length || 1}
                   </span>
                 </div>
-                <h3 className="text-base sm:text-lg font-semibold text-white mt-1 truncate">
+                <h3 className="text-base sm:text-lg font-semibold text-white mt-0.5 truncate">
                   {galleryProduct.product.name}
                 </h3>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setGalleryProduct(null)}
-                className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 active:bg-white/30 hover:text-white transition"
-                aria-label="Close modal"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                {/* Direct Full-Res Original Link */}
+                <a
+                  href={
+                    galleryProduct.product.images?.[galleryProduct.activeIndex] ||
+                    galleryProduct.product.image ||
+                    (galleryProduct.product as any).image_url ||
+                    "#"
+                  }
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white px-3 py-1 text-xs font-medium transition"
+                  title="Open original high-res photo in full size"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                  </svg>
+                  <span>Full Size ⤢</span>
+                </a>
+
+                <button
+                  type="button"
+                  onClick={() => setGalleryProduct(null)}
+                  className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 active:bg-white/30 hover:text-white transition"
+                  aria-label="Close modal"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
-            {/* Main Image Showcase with Touch Swipe Support */}
+            {/* Main Image Showcase: 100% Full Uncropped Image */}
             <div
               onTouchStart={(e) => {
                 touchModalStartRef.current = {
@@ -862,7 +883,7 @@ export default function FurniturePage() {
                 }
                 touchModalStartRef.current = null;
               }}
-              className="relative flex-1 flex items-center justify-center bg-black/60 p-2 sm:p-4 min-h-[240px] max-h-[50vh] sm:max-h-[58vh] overflow-hidden select-none touch-pan-y"
+              className="relative flex-1 flex items-center justify-center bg-black/85 p-2 sm:p-4 min-h-[300px] max-h-[68vh] sm:max-h-[75vh] overflow-hidden select-none touch-pan-y"
             >
               <img
                 src={
@@ -870,7 +891,7 @@ export default function FurniturePage() {
                   galleryProduct.product.image
                 }
                 alt={`${galleryProduct.product.name} preview`}
-                className="max-h-full max-w-full object-contain rounded-xl shadow-lg transition-all duration-300"
+                className="max-h-[66vh] sm:max-h-[73vh] max-w-full w-auto h-auto object-contain rounded-xl shadow-2xl transition-all duration-300"
               />
 
               {/* Prev / Next buttons in modal */}
@@ -879,7 +900,7 @@ export default function FurniturePage() {
                   <button
                     type="button"
                     onClick={prevGalleryImage}
-                    className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/90 active:scale-90 transition shadow-lg text-xl sm:text-2xl font-bold z-20"
+                    className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/90 active:scale-90 transition shadow-lg text-xl sm:text-2xl font-bold z-20 cursor-pointer"
                     aria-label="Previous image"
                   >
                     ‹
@@ -887,7 +908,7 @@ export default function FurniturePage() {
                   <button
                     type="button"
                     onClick={nextGalleryImage}
-                    className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/90 active:scale-90 transition shadow-lg text-xl sm:text-2xl font-bold z-20"
+                    className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 flex h-9 w-9 sm:h-11 sm:w-11 items-center justify-center rounded-full bg-black/70 text-white hover:bg-black/90 active:scale-90 transition shadow-lg text-xl sm:text-2xl font-bold z-20 cursor-pointer"
                     aria-label="Next image"
                   >
                     ›
@@ -896,9 +917,9 @@ export default function FurniturePage() {
               )}
             </div>
 
-            {/* Thumbnails Strip (Up to 5 images, horizontal snap scroll on mobile) */}
+            {/* Thumbnails Strip (Uncropped previews) */}
             {(galleryProduct.product.images?.length || 0) > 1 && (
-              <div className="border-t border-white/10 bg-[#141210] px-3 py-2.5 sm:px-6 sm:py-3">
+              <div className="border-t border-white/10 bg-[#141210] px-3 py-2 sm:px-6 sm:py-2.5">
                 <div className="flex items-center justify-start sm:justify-center gap-2 sm:gap-3 overflow-x-auto py-1 scrollbar-none snap-x">
                   {galleryProduct.product.images.map((imgUrl, idx) => {
                     const isCurrent = idx === galleryProduct.activeIndex;
@@ -911,7 +932,7 @@ export default function FurniturePage() {
                             prev ? { ...prev, activeIndex: idx } : null
                           )
                         }
-                        className={`relative h-14 w-16 sm:h-16 sm:w-20 flex-shrink-0 snap-center overflow-hidden rounded-lg border-2 transition-all duration-200 ${
+                        className={`relative h-14 w-20 sm:h-16 sm:w-24 flex-shrink-0 snap-center overflow-hidden rounded-lg border-2 bg-black/50 transition-all duration-200 ${
                           isCurrent
                             ? "border-[#d8bd91] ring-2 ring-[#d8bd91]/50 scale-105"
                             : "border-white/20 opacity-60 hover:opacity-100"
@@ -920,7 +941,7 @@ export default function FurniturePage() {
                         <img
                           src={imgUrl}
                           alt={`Thumbnail ${idx + 1}`}
-                          className="h-full w-full object-cover"
+                          className="h-full w-full object-contain p-0.5"
                         />
                         {isCurrent && (
                           <div className="absolute inset-0 bg-[#d8bd91]/15 pointer-events-none" />
@@ -933,7 +954,7 @@ export default function FurniturePage() {
             )}
 
             {/* Modal Footer with Product Summary & Action Buttons */}
-            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t border-white/10 bg-[#1c1917] px-4 py-3 sm:px-6 sm:py-4">
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 border-t border-white/10 bg-[#1c1917] px-4 py-2.5 sm:px-6 sm:py-3.5">
               <div className="text-left">
                 <div className="flex items-baseline gap-2">
                   <span className="text-[10px] sm:text-[11px] uppercase tracking-wider text-[#d8bd91] font-semibold">
@@ -954,13 +975,13 @@ export default function FurniturePage() {
                 <button
                   type="button"
                   onClick={() => setGalleryProduct(null)}
-                  className="flex-1 sm:flex-initial text-center rounded-xl border border-white/20 px-4 py-2.5 sm:py-2 text-xs font-semibold text-white/80 active:bg-white/20 hover:bg-white/10 transition"
+                  className="flex-1 sm:flex-initial text-center rounded-xl border border-white/20 px-4 py-2 sm:py-1.5 text-xs font-semibold text-white/80 active:bg-white/20 hover:bg-white/10 transition"
                 >
                   Close
                 </button>
                 <a
                   href={`/custom-furniture?design=${encodeURIComponent(galleryProduct.product.id)}`}
-                  className="flex-1 sm:flex-initial text-center rounded-xl border border-[#d8bd91]/40 text-[#d8bd91] hover:bg-[#8b6f47]/30 px-4 py-2.5 sm:py-2 text-xs font-semibold shadow-sm transition"
+                  className="flex-1 sm:flex-initial text-center rounded-xl border border-[#d8bd91]/40 text-[#d8bd91] hover:bg-[#8b6f47]/30 px-4 py-2 sm:py-1.5 text-xs font-semibold shadow-sm transition"
                 >
                   Custom
                 </a>
@@ -971,7 +992,7 @@ export default function FurniturePage() {
                     setGalleryProduct(null);
                     handleBuyNow(prod);
                   }}
-                  className="flex-1 sm:flex-initial text-center rounded-xl bg-white hover:bg-[#f5efe6] text-[#29251f] px-5 py-2.5 sm:py-2 text-xs font-semibold shadow-sm transition flex items-center justify-center gap-1.5"
+                  className="flex-1 sm:flex-initial text-center rounded-xl bg-white hover:bg-[#f5efe6] text-[#29251f] px-5 py-2 sm:py-1.5 text-xs font-semibold shadow-sm transition flex items-center justify-center gap-1.5"
                 >
                   <span>Buy Now</span>
                   <span>💳</span>

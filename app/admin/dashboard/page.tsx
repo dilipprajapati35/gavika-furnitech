@@ -6456,18 +6456,18 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Product Gallery & Details Preview Modal (Matches Furniture Screen) */}
+      {/* Product Gallery & Details Preview Modal (Matches Furniture Screen, Full Uncropped View) */}
       {previewProduct && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md p-2.5 sm:p-6"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-md p-2 sm:p-4 md:p-6"
           onClick={() => setPreviewProduct(null)}
         >
           <div
-            className="relative w-full max-w-4xl overflow-hidden rounded-2xl sm:rounded-3xl bg-[#1c1917] text-white shadow-2xl flex flex-col max-h-[94vh] sm:max-h-[92vh]"
+            className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl overflow-hidden rounded-2xl sm:rounded-3xl bg-[#1c1917] text-white shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[95vh] border border-white/10"
             onClick={(e) => e.stopPropagation()}
           >
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3 sm:px-6 sm:py-4">
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-2.5 sm:px-6 sm:py-3.5 bg-[#141210]">
               <div className="min-w-0 pr-3">
                 <div className="flex items-center gap-2">
                   <span className="rounded-full bg-[#8b6f47]/30 border border-[#8b6f47]/50 px-2.5 py-0.5 text-[10px] sm:text-xs font-medium text-[#d8bd91]">
@@ -6478,23 +6478,46 @@ export default function AdminDashboard() {
                     {extractProductImages(previewProduct.product).length || 1}
                   </span>
                 </div>
-                <h3 className="text-base sm:text-lg font-semibold text-white mt-1 truncate">
+                <h3 className="text-base sm:text-lg font-semibold text-white mt-0.5 truncate">
                   {previewProduct.product.name}
                 </h3>
               </div>
 
-              <button
-                type="button"
-                onClick={() => setPreviewProduct(null)}
-                className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 active:bg-white/30 hover:text-white transition"
-                aria-label="Close modal"
-              >
-                ✕
-              </button>
+              <div className="flex items-center gap-2">
+                {(() => {
+                  const currentModalImg =
+                    extractProductImages(previewProduct.product)[
+                      previewProduct.activeIndex
+                    ] || previewProduct.product.image_url;
+                  return currentModalImg ? (
+                    <a
+                      href={currentModalImg}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="hidden sm:inline-flex items-center gap-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white/80 hover:text-white px-3 py-1 text-xs font-medium transition"
+                      title="Open original high-res photo in full size"
+                    >
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                      </svg>
+                      <span>Full Size ⤢</span>
+                    </a>
+                  ) : null;
+                })()}
+
+                <button
+                  type="button"
+                  onClick={() => setPreviewProduct(null)}
+                  className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 active:bg-white/30 hover:text-white transition"
+                  aria-label="Close modal"
+                >
+                  ✕
+                </button>
+              </div>
             </div>
 
-            {/* Main Image Showcase */}
-            <div className="relative flex-1 min-h-[260px] sm:min-h-[420px] max-h-[58vh] bg-black/40 flex items-center justify-center overflow-hidden">
+            {/* Main Image Showcase: 100% Full Uncropped Image */}
+            <div className="relative flex-1 min-h-[300px] max-h-[68vh] sm:max-h-[75vh] bg-black/85 flex items-center justify-center overflow-hidden p-2 sm:p-4">
               {(() => {
                 const currentModalImg =
                   extractProductImages(previewProduct.product)[
@@ -6517,7 +6540,7 @@ export default function AdminDashboard() {
                   <img
                     src={currentModalImg}
                     alt={previewProduct.product.name}
-                    className="max-h-full max-w-full object-contain select-none"
+                    className="max-h-[66vh] sm:max-h-[73vh] max-w-full w-auto h-auto object-contain rounded-xl shadow-2xl transition-all duration-300 select-none"
                     onError={(e) => {
                       (e.target as HTMLElement).style.display = "none";
                     }}
@@ -6543,7 +6566,7 @@ export default function AdminDashboard() {
                           : null
                       );
                     }}
-                    className="absolute left-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 hover:bg-black/85 text-white backdrop-blur-xs transition active:scale-95 text-xl font-bold shadow-lg"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/70 hover:bg-black/90 text-white backdrop-blur-xs transition active:scale-95 text-xl font-bold shadow-lg cursor-pointer"
                     title="Previous photo"
                   >
                     ‹
@@ -6563,7 +6586,7 @@ export default function AdminDashboard() {
                           : null
                       );
                     }}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/60 hover:bg-black/85 text-white backdrop-blur-xs transition active:scale-95 text-xl font-bold shadow-lg"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 flex h-10 w-10 items-center justify-center rounded-full bg-black/70 hover:bg-black/90 text-white backdrop-blur-xs transition active:scale-95 text-xl font-bold shadow-lg cursor-pointer"
                     title="Next photo"
                   >
                     ›
@@ -6572,10 +6595,10 @@ export default function AdminDashboard() {
               )}
             </div>
 
-            {/* Thumbnails Row */}
+            {/* Thumbnails Row (Uncropped previews) */}
             {extractProductImages(previewProduct.product).length > 1 && (
-              <div className="border-t border-white/10 bg-black/40 px-4 py-2.5 overflow-x-auto scrollbar-none">
-                <div className="flex gap-2">
+              <div className="border-t border-white/10 bg-[#141210] px-4 py-2 sm:py-2.5 overflow-x-auto scrollbar-none">
+                <div className="flex gap-2.5 sm:gap-3">
                   {extractProductImages(previewProduct.product).map((imgUrl, idx) => {
                     const isCurrent = idx === previewProduct.activeIndex;
                     return (
@@ -6587,7 +6610,7 @@ export default function AdminDashboard() {
                             prev ? { ...prev, activeIndex: idx } : null
                           )
                         }
-                        className={`relative h-14 w-16 sm:h-16 sm:w-20 shrink-0 overflow-hidden rounded-lg border-2 transition-all duration-200 ${
+                        className={`relative h-14 w-20 sm:h-16 sm:w-24 shrink-0 overflow-hidden rounded-lg border-2 bg-black/50 transition-all duration-200 ${
                           isCurrent
                             ? "border-[#d8bd91] ring-2 ring-[#d8bd91]/50 scale-105"
                             : "border-white/20 opacity-60 hover:opacity-100"
@@ -6596,7 +6619,7 @@ export default function AdminDashboard() {
                         <img
                           src={imgUrl}
                           alt=""
-                          className="h-full w-full object-cover"
+                          className="h-full w-full object-contain p-0.5"
                         />
                       </button>
                     );
