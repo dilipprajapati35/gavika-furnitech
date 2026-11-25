@@ -470,18 +470,7 @@ function LoginFormContent() {
               </div>
             )}
 
-            {/* Role Access Indicator */}
-            {!isSignup && !isForgotPassword && !loggedOutParam && !reasonParam && (
-              <div className="mb-6 p-3 rounded-xl bg-[#faf7f2] border border-[#e7dccd] text-xs text-[#7a5235] flex items-center justify-between">
-                <span className="flex items-center gap-1.5 font-semibold">
-                  <span>👑</span>
-                  <span>Customer & Admin Portal</span>
-                </span>
-                <span className="text-[11px] text-gray-500 font-medium">
-                  Admins auto-open Dashboard
-                </span>
-              </div>
-            )}
+           
 
             {/* Checkout Login Intent Banner */}
             {reasonParam === "buy" && (

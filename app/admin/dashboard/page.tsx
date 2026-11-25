@@ -1,12 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
-import { supabase, createEphemeralClient } from "@/utils/supabase/client";
+import { getCategoryIcon, getCategoryOrderIndex } from "@/utils/categories";
+import ProductShareModal, { ShareableProduct } from "@/components/ProductShareModal";
 import {
-  extractProductImages,
   deleteProductImagesFromStorage,
+  extractProductImages,
 } from "@/utils/product-images";
+import { createEphemeralClient, supabase } from "@/utils/supabase/client";
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 type CustomRequest = {
   id: string;
@@ -205,11 +208,13 @@ function AdminProductCard({
   onView,
   onEdit,
   onDelete,
+  onShare,
 }: {
   product: CatalogueProduct;
   onView: (index: number) => void;
   onEdit: () => void;
   onDelete: () => void;
+  onShare?: () => void;
 }) {
   const allImages = extractProductImages(product);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -283,10 +288,32 @@ function AdminProductCard({
 
           {/* Photo Count Pill */}
           {displayImages.length > 1 && (
-            <span className="absolute top-3 right-3 rounded-full bg-black/75 backdrop-blur-md text-white px-2.5 py-1 text-[11px] font-medium flex items-center gap-1.5 shadow-md pointer-events-none">
+            <span className="absolute top-3 right-12 rounded-full bg-black/75 backdrop-blur-md text-white px-2.5 py-1 text-[11px] font-medium flex items-center gap-1.5 shadow-md pointer-events-none">
               <span>📷</span>
-              <span>{displayImages.length} photos</span>
+              <span>{displayImages.length}</span>
             </span>
+          )}
+
+          {/* Share Button (Top Right) */}
+          {onShare && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onShare();
+              }}
+              className="absolute top-3 right-3 z-20 h-8 w-8 rounded-full bg-white/95 hover:bg-white text-[#3d281c] hover:text-[#8b5e3c] flex items-center justify-center shadow-md backdrop-blur-xs transition duration-150 active:scale-95 cursor-pointer border border-stone-200/50"
+              title="Share this product"
+              aria-label="Share product"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="18" cy="5" r="3" />
+                <circle cx="6" cy="12" r="3" />
+                <circle cx="18" cy="19" r="3" />
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+              </svg>
+            </button>
           )}
 
           {/* Hover to view overlay */}
@@ -323,11 +350,10 @@ function AdminProductCard({
                       e.stopPropagation();
                       setActiveImageIndex(idx);
                     }}
-                    className={`pointer-events-auto transition-all ${
-                      idx === activeImageIndex
-                        ? "w-4 h-1.5 rounded-full bg-white"
-                        : "w-1.5 h-1.5 rounded-full bg-white/50 hover:bg-white/80"
-                    }`}
+                    className={`pointer-events-auto transition-all ${idx === activeImageIndex
+                      ? "w-4 h-1.5 rounded-full bg-white"
+                      : "w-1.5 h-1.5 rounded-full bg-white/50 hover:bg-white/80"
+                      }`}
                     aria-label={`Go to photo ${idx + 1}`}
                   />
                 ))}
@@ -398,6 +424,24 @@ function AdminProductCard({
           <span>View</span>
         </button>
 
+        {onShare && (
+          <button
+            type="button"
+            onClick={onShare}
+            className="inline-flex items-center justify-center p-2 rounded-xl text-xs font-semibold text-[#5a3927] bg-white hover:bg-[#f5efe6] border border-[#d8c7b3] transition duration-150 active:scale-98 shadow-2xs cursor-pointer"
+            title="Share product link / WhatsApp"
+            aria-label="Share"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+          </button>
+        )}
+
         <button
           type="button"
           onClick={onEdit}
@@ -451,12 +495,15 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState<
     "requests" | "orders" | "options" | "products" | "users"
   >("requests");
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [adminCategoryFilter, setAdminCategoryFilter] = useState("All");
 
   const [usersList, setUsersList] = useState<ManagedUser[]>([]);
   const [usersLoading, setUsersLoading] = useState(false);
   const [userSearchQuery, setUserSearchQuery] = useState("");
   const [userRoleFilter, setUserRoleFilter] = useState<"All" | "Admin" | "Customer">("All");
   const [selectedUserDetails, setSelectedUserDetails] = useState<ManagedUser | null>(null);
+  const [shareProduct, setShareProduct] = useState<ShareableProduct | null>(null);
   const [showAddAdminModal, setShowAddAdminModal] = useState(false);
   const [addAdminEmail, setAddAdminEmail] = useState("");
   const [addAdminLoading, setAddAdminLoading] = useState(false);
@@ -515,9 +562,9 @@ export default function AdminDashboard() {
           setPreviewProduct((prev) =>
             prev
               ? {
-                  ...prev,
-                  activeIndex: (prev.activeIndex - 1 + imgs.length) % imgs.length,
-                }
+                ...prev,
+                activeIndex: (prev.activeIndex - 1 + imgs.length) % imgs.length,
+              }
               : null
           );
         }
@@ -527,9 +574,9 @@ export default function AdminDashboard() {
           setPreviewProduct((prev) =>
             prev
               ? {
-                  ...prev,
-                  activeIndex: (prev.activeIndex + 1) % imgs.length,
-                }
+                ...prev,
+                activeIndex: (prev.activeIndex + 1) % imgs.length,
+              }
               : null
           );
         }
@@ -565,16 +612,26 @@ export default function AdminDashboard() {
     };
   }, []);
 
+  type EditProductImageItem =
+    | { id: string; type: "existing"; url: string }
+    | { id: string; type: "new"; file: File; preview: string };
+
   const [editingProduct, setEditingProduct] = useState<CatalogueProduct | null>(null);
   const [editForm, setEditForm] = useState({
     name: "",
     category: "",
     description: "",
     price: "",
-    existing_images: [] as string[],
-    new_image_files: [] as File[],
-    new_image_previews: [] as string[],
+    images: [] as EditProductImageItem[],
   });
+
+  // Drag and drop state for Edit Product modal
+  const [editDragIndex, setEditDragIndex] = useState<number | null>(null);
+  const [editDragOverIndex, setEditDragOverIndex] = useState<number | null>(null);
+
+  // Drag and drop state for Add Product form
+  const [addDragIndex, setAddDragIndex] = useState<number | null>(null);
+  const [addDragOverIndex, setAddDragOverIndex] = useState<number | null>(null);
 
   const [productForm, setProductForm] = useState({
     name: "",
@@ -627,13 +684,30 @@ export default function AdminDashboard() {
     }));
   };
 
+  const moveProductImage = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
+    setProductForm((prev) => {
+      if (toIndex >= prev.image_files.length) return prev;
+      const files = [...prev.image_files];
+      const previews = [...prev.image_previews];
+      const [movedFile] = files.splice(fromIndex, 1);
+      const [movedPreview] = previews.splice(fromIndex, 1);
+      files.splice(toIndex, 0, movedFile);
+      previews.splice(toIndex, 0, movedPreview);
+      return {
+        ...prev,
+        image_files: files,
+        image_previews: previews,
+      };
+    });
+  };
+
   const handleSelectEditImages = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     if (!files.length) return;
 
     setEditForm((prev) => {
-      const currentCount = prev.existing_images.length + prev.new_image_files.length;
-      const remainingSlots = 5 - currentCount;
+      const remainingSlots = 5 - prev.images.length;
       if (remainingSlots <= 0) {
         showToast({
           type: "error",
@@ -650,28 +724,40 @@ export default function AdminDashboard() {
       }
 
       const filesToAdd = files.slice(0, remainingSlots);
+      const newItems: EditProductImageItem[] = filesToAdd.map((file, i) => ({
+        id: `new-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+        type: "new",
+        file,
+        preview: URL.createObjectURL(file),
+      }));
+
       return {
         ...prev,
-        new_image_files: [...prev.new_image_files, ...filesToAdd],
-        new_image_previews: [...prev.new_image_previews, ...filesToAdd.map((f) => URL.createObjectURL(f))],
+        images: [...prev.images, ...newItems],
       };
     });
     e.target.value = "";
   };
 
-  const handleRemoveExistingEditImage = (idx: number) => {
+  const handleRemoveEditImage = (index: number) => {
     setEditForm((prev) => ({
       ...prev,
-      existing_images: prev.existing_images.filter((_, i) => i !== idx),
+      images: prev.images.filter((_, i) => i !== index),
     }));
   };
 
-  const handleRemoveNewEditImage = (idx: number) => {
-    setEditForm((prev) => ({
-      ...prev,
-      new_image_files: prev.new_image_files.filter((_, i) => i !== idx),
-      new_image_previews: prev.new_image_previews.filter((_, i) => i !== idx),
-    }));
+  const moveEditImage = (fromIndex: number, toIndex: number) => {
+    if (fromIndex === toIndex || fromIndex < 0 || toIndex < 0) return;
+    setEditForm((prev) => {
+      if (toIndex >= prev.images.length) return prev;
+      const updated = [...prev.images];
+      const [movedItem] = updated.splice(fromIndex, 1);
+      updated.splice(toIndex, 0, movedItem);
+      return {
+        ...prev,
+        images: updated,
+      };
+    });
   };
 
   const [requests, setRequests] = useState<CustomRequest[]>([]);
@@ -812,7 +898,7 @@ export default function AdminDashboard() {
 
       const [requestsResult, quotationsResult] = await Promise.all([
         supabase
-         .from("custom_requests")
+          .from("custom_requests")
           .select(`
           id,
           request_id,
@@ -1669,12 +1755,12 @@ export default function AdminDashboard() {
           setSelectedUserDetails((prev) =>
             prev
               ? {
-                  ...prev,
-                  full_name: cleanName,
-                  email: cleanEmail,
-                  mobile: cleanMobile || "-",
-                  is_admin: targetIsAdmin,
-                }
+                ...prev,
+                full_name: cleanName,
+                email: cleanEmail,
+                mobile: cleanMobile || "-",
+                is_admin: targetIsAdmin,
+              }
               : null
           );
         }
@@ -1731,12 +1817,12 @@ export default function AdminDashboard() {
         setSelectedUserDetails((prev) =>
           prev
             ? {
-                ...prev,
-                full_name: cleanName,
-                email: cleanEmail,
-                mobile: cleanMobile || "-",
-                is_admin: targetIsAdmin,
-              }
+              ...prev,
+              full_name: cleanName,
+              email: cleanEmail,
+              mobile: cleanMobile || "-",
+              is_admin: targetIsAdmin,
+            }
             : null
         );
       }
@@ -1993,9 +2079,11 @@ export default function AdminDashboard() {
       category: product.category,
       description: product.description || "",
       price: product.price,
-      existing_images: existingImgs,
-      new_image_files: [],
-      new_image_previews: [],
+      images: existingImgs.map((url, i) => ({
+        id: `existing-${i}-${url}`,
+        type: "existing" as const,
+        url,
+      })),
     });
   }
 
@@ -2006,10 +2094,10 @@ export default function AdminDashboard() {
       category: "",
       description: "",
       price: "",
-      existing_images: [],
-      new_image_files: [],
-      new_image_previews: [],
+      images: [],
     });
+    setEditDragIndex(null);
+    setEditDragOverIndex(null);
   }
 
   async function handleUpdateProduct(e: React.FormEvent) {
@@ -2017,8 +2105,7 @@ export default function AdminDashboard() {
     if (!editingProduct) return;
     if (!editForm.name.trim()) return;
 
-    const totalRemaining = editForm.existing_images.length + editForm.new_image_files.length;
-    if (totalRemaining === 0) {
+    if (editForm.images.length === 0) {
       setProductFeedback({
         type: "error",
         text: "Product must have at least 1 image (up to 5).",
@@ -2030,33 +2117,39 @@ export default function AdminDashboard() {
     setProductFeedback(null);
 
     const originalImages = extractProductImages(editingProduct);
+    const remainingExistingUrls = editForm.images
+      .filter((img) => img.type === "existing")
+      .map((img) => (img as { type: "existing"; url: string }).url);
     const removedImages = originalImages.filter(
-      (img) => !editForm.existing_images.includes(img)
+      (img) => !remainingExistingUrls.includes(img)
     );
 
     try {
-      const newlyUploadedUrls: string[] = [];
-      for (let i = 0; i < editForm.new_image_files.length; i++) {
-        const file = editForm.new_image_files[i];
-        const fileExt = file.name.split(".").pop() || "jpg";
-        const filePath = `products/${Date.now()}-${i}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
+      const allUrls: string[] = [];
+      for (let i = 0; i < editForm.images.length; i++) {
+        const item = editForm.images[i];
+        if (item.type === "existing") {
+          allUrls.push(item.url);
+        } else {
+          const file = item.file;
+          const fileExt = file.name.split(".").pop() || "jpg";
+          const filePath = `products/${Date.now()}-${i}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
-        const { error: uploadError } = await supabase.storage
-          .from("gavika-project-files")
-          .upload(filePath, file, { upsert: true });
+          const { error: uploadError } = await supabase.storage
+            .from("gavika-project-files")
+            .upload(filePath, file, { upsert: true });
 
-        if (uploadError) {
-          throw new Error(`Failed to upload new image ${i + 1}: ${uploadError.message}`);
+          if (uploadError) {
+            throw new Error(`Failed to upload new image ${i + 1}: ${uploadError.message}`);
+          }
+
+          const { data: publicUrlData } = supabase.storage
+            .from("gavika-project-files")
+            .getPublicUrl(filePath);
+
+          allUrls.push(publicUrlData.publicUrl);
         }
-
-        const { data: publicUrlData } = supabase.storage
-          .from("gavika-project-files")
-          .getPublicUrl(filePath);
-
-        newlyUploadedUrls.push(publicUrlData.publicUrl);
       }
-
-      const allUrls = [...editForm.existing_images, ...newlyUploadedUrls];
 
       const updatePayload = {
         name: editForm.name.trim(),
@@ -2466,9 +2559,9 @@ export default function AdminDashboard() {
         currentRequests.map((request) =>
           request.id === selectedRequest.id
             ? {
-                ...request,
-                status: "Quotation Sent",
-              }
+              ...request,
+              status: "Quotation Sent",
+            }
             : request
         )
       );
@@ -2580,13 +2673,12 @@ export default function AdminDashboard() {
 
             {/* Modal Icon Badge */}
             <div
-              className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm ${
-                deleteConfirm.variant === "primary"
-                  ? "bg-amber-50 border border-amber-200 text-amber-800 text-3xl"
-                  : deleteConfirm.variant === "warning"
+              className={`mx-auto w-16 h-16 rounded-2xl flex items-center justify-center mb-4 shadow-sm ${deleteConfirm.variant === "primary"
+                ? "bg-amber-50 border border-amber-200 text-amber-800 text-3xl"
+                : deleteConfirm.variant === "warning"
                   ? "bg-orange-50 border border-orange-200 text-orange-600 text-3xl"
                   : "bg-red-50 border border-red-100 text-red-600"
-              }`}
+                }`}
             >
               {deleteConfirm.icon ? (
                 <span className="text-3xl">{deleteConfirm.icon}</span>
@@ -2624,13 +2716,12 @@ export default function AdminDashboard() {
                 type="button"
                 disabled={deleteConfirm.loading}
                 onClick={handleExecuteDelete}
-                className={`w-full py-3 px-4 rounded-xl active:scale-[0.98] text-sm font-semibold text-white flex items-center justify-center gap-2 transition disabled:opacity-50 ${
-                  deleteConfirm.variant === "primary"
-                    ? "bg-[#3d281c] hover:bg-[#5a3927] shadow-lg shadow-[#3d281c]/25"
-                    : deleteConfirm.variant === "warning"
+                className={`w-full py-3 px-4 rounded-xl active:scale-[0.98] text-sm font-semibold text-white flex items-center justify-center gap-2 transition disabled:opacity-50 ${deleteConfirm.variant === "primary"
+                  ? "bg-[#3d281c] hover:bg-[#5a3927] shadow-lg shadow-[#3d281c]/25"
+                  : deleteConfirm.variant === "warning"
                     ? "bg-amber-700 hover:bg-amber-800 shadow-lg shadow-amber-700/25"
                     : "bg-red-600 hover:bg-red-700 shadow-lg shadow-red-600/25"
-                }`}
+                  }`}
               >
                 {deleteConfirm.loading ? (
                   <>
@@ -2662,19 +2753,17 @@ export default function AdminDashboard() {
       {toast && (
         <div className="fixed top-6 right-6 z-[100] max-w-sm w-full transition-all duration-300 ease-out transform translate-y-0">
           <div
-            className={`relative overflow-hidden rounded-2xl border bg-white p-4 shadow-2xl backdrop-blur-sm ${
-              toast.type === "success"
-                ? "border-green-300 shadow-green-950/10"
-                : "border-red-300 shadow-red-950/10"
-            }`}
+            className={`relative overflow-hidden rounded-2xl border bg-white p-4 shadow-2xl backdrop-blur-sm ${toast.type === "success"
+              ? "border-green-300 shadow-green-950/10"
+              : "border-red-300 shadow-red-950/10"
+              }`}
           >
             <div className="flex items-start gap-3">
               <div
-                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${
-                  toast.type === "success"
-                    ? "bg-green-100 text-green-700"
-                    : "bg-red-100 text-red-700"
-                }`}
+                className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-xl ${toast.type === "success"
+                  ? "bg-green-100 text-green-700"
+                  : "bg-red-100 text-red-700"
+                  }`}
               >
                 {toast.type === "success" ? (
                   <svg className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -2706,68 +2795,164 @@ export default function AdminDashboard() {
             </div>
             {/* Auto-dismiss progress bar animation */}
             <div
-              className={`absolute bottom-0 left-0 h-1 ${
-                toast.type === "success" ? "bg-green-500" : "bg-red-500"
-              } w-full animate-toast-progress`}
+              className={`absolute bottom-0 left-0 h-1 ${toast.type === "success" ? "bg-green-500" : "bg-red-500"
+                } w-full animate-toast-progress`}
             />
           </div>
         </div>
       )}
 
-      {/* Header */}
-      <header className="bg-[#3d281c] text-white sticky top-0 z-40 shadow-sm">
-        <div className="max-w-7xl mx-auto px-3.5 sm:px-6 py-3 sm:py-4 flex items-center justify-between">
-          <div className="flex items-center gap-2.5 sm:gap-3">
-            <a href="/" className="flex items-center gap-2.5 sm:gap-3 hover:opacity-90 transition">
-              <img
-                src="/Gavika-new-logo.png"
-                alt="Gavika Furnitech"
-                className="h-8 w-8 sm:h-10 sm:w-10 object-contain rounded-lg bg-white/10 p-1 shrink-0"
-              />
-              <div>
-                <h1 className="text-base sm:text-xl font-serif font-semibold tracking-wide">
-                  Gavika Furnitech
-                </h1>
+      {/* NAVBAR */}
+      <header className="sticky top-0 z-50 border-b border-[#ded5c8] bg-[#f8f5ef]/95 backdrop-blur">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 sm:py-5">
+          <Link href="/" className="flex items-center gap-3">
+            <img
+              src="/Gavika-new-logo.png"
+              alt="Gavika Furnitech"
+              className="h-14 w-auto object-contain"
+            />
 
-                <p className="text-[10px] sm:text-xs text-white/70">
-                  Admin Dashboard
-                </p>
-              </div>
-            </a>
-          </div>
+            <div>
+              <p className="text-xl font-semibold tracking-wide text-[#29251f]">
+                Gavika Furnitech
+              </p>
+              <p className="text-xs tracking-[0.2em] text-[#8b6f47]">
+                PREMIUM FURNITURE
+              </p>
+            </div>
+          </Link>
 
-          <div className="flex items-center gap-2 sm:gap-3">
-            <a
-              href="/"
-              className="rounded-xl border border-white/20 bg-white/10 px-2.5 sm:px-3.5 py-1.5 sm:py-2 text-xs font-semibold hover:bg-white/20 transition flex items-center gap-1.5"
-            >
-              <span>🏪</span>
-              <span className="hidden sm:inline">View Storefront</span>
-              <span className="sm:hidden">Store</span>
-            </a>
+          <nav className="hidden items-center gap-8 text-sm font-medium md:flex">
+            <Link href="/" className="hover:text-[#8b6f47] transition">
+              Home
+            </Link>
 
-            <button
-              onClick={handleLogout}
-              className="rounded-xl bg-white/10 px-3 sm:px-4 py-1.5 sm:py-2 text-xs font-semibold hover:bg-red-600/80 transition"
-            >
-              Logout
-            </button>
-          </div>
+            <Link href="/furniture" className="hover:text-[#8b6f47] transition">
+              Furniture
+            </Link>
+
+            <Link href="/custom-furniture" className="hover:text-[#8b6f47] transition">
+              Custom Furniture
+            </Link>
+
+            <Link href="/#process" className="hover:text-[#8b6f47] transition">
+              About
+            </Link>
+
+            <Link href="/#contact" className="hover:text-[#8b6f47] transition">
+              Contact
+            </Link>
+
+            <div className="flex items-center gap-3">
+              <span className="font-semibold text-[#8b6f47] flex items-center gap-1.5">
+                <span>👤</span>
+                <span>Admin Dashboard</span>
+              </span>
+              <button
+                type="button"
+                onClick={handleLogout}
+                className="text-xs text-gray-400 hover:text-red-600 transition"
+              >
+                Logout
+              </button>
+            </div>
+          </nav>
+
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="md:hidden rounded-lg border border-[#ded5c8] px-3 py-2 text-xl"
+            aria-label="Open menu"
+          >
+            {mobileMenuOpen ? "✕" : "☰"}
+          </button>
         </div>
+
+        {mobileMenuOpen && (
+          <div className="md:hidden border-t border-[#ded5c8] bg-[#f8f5ef] px-6 py-4">
+            <nav className="flex flex-col gap-4 text-sm font-medium">
+              <Link
+                href="/"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Home
+              </Link>
+
+              <Link
+                href="/furniture"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Furniture
+              </Link>
+
+              <Link
+                href="/custom-furniture"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Custom Furniture
+              </Link>
+
+              <Link
+                href="/#process"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                About
+              </Link>
+
+              <Link
+                href="/#contact"
+                onClick={() => setMobileMenuOpen(false)}
+                className="hover:text-[#8b6f47]"
+              >
+                Contact
+              </Link>
+
+              <div className="flex flex-col gap-2 pt-2 border-t border-[#ded5c8]">
+                <span className="font-semibold text-[#8b6f47]">
+                  👤 Admin Dashboard
+                </span>
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="text-left text-xs text-red-600 hover:underline"
+                >
+                  Logout
+                </button>
+              </div>
+            </nav>
+          </div>
+        )}
       </header>
 
       {/* Dashboard */}
-      <section className="max-w-7xl mx-auto px-3.5 sm:px-6 py-4 sm:py-8">
+      <section className="max-w-7xl mx-auto px-4 sm:px-6 py-6 sm:py-8">
+        {/* Portal Title Header */}
+        <div className="mb-6 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+          <div>
+            <p className="text-xs sm:text-sm font-semibold uppercase tracking-[0.25em] text-[#8b5e3c]">
+              Administrative Portal
+            </p>
+            <h1 className="text-2xl sm:text-3xl font-semibold tracking-tight text-[#29251f] mt-1">
+              Admin Dashboard
+            </h1>
+            <p className="text-[#625b52] mt-1 text-xs sm:text-sm">
+              Manage custom requests, customer orders, catalogue products, master options, and user accounts.
+            </p>
+          </div>
+        </div>
 
         {/* Tab Navigation (Touch-Friendly Horizontal Scroll on Mobile, Wrapped on Desktop) */}
-        <div className="flex items-center gap-2 mb-6 sm:mb-8 border-b border-[#ded5c8] pb-3 overflow-x-auto no-scrollbar -mx-3.5 px-3.5 sm:mx-0 sm:px-0 sm:flex-wrap">
+        <div className="flex items-center gap-2 mb-6 sm:mb-8 border-b border-[#ded5c8] pb-3 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
           <button
             onClick={() => setActiveTab("requests")}
-            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${
-              activeTab === "requests"
-                ? "bg-[#3d281c] text-white shadow-sm"
-                : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
-            }`}
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${activeTab === "requests"
+              ? "bg-[#3d281c] text-white shadow-sm"
+              : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
+              }`}
           >
             📋 Requests ({requests.length})
           </button>
@@ -2777,19 +2962,17 @@ export default function AdminDashboard() {
               setActiveTab("orders");
               loadOrders();
             }}
-            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 ${
-              activeTab === "orders"
-                ? "bg-[#3d281c] text-white shadow-sm"
-                : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
-            }`}
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 ${activeTab === "orders"
+              ? "bg-[#3d281c] text-white shadow-sm"
+              : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
+              }`}
           >
             <span>📦 Orders</span>
             <span
-              className={`rounded-full px-2 py-0.5 text-[10px] sm:text-xs font-semibold ${
-                activeTab === "orders"
-                  ? "bg-[#7a5235] text-white"
-                  : "bg-[#f5efe6] text-[#7a5235]"
-              }`}
+              className={`rounded-full px-2 py-0.5 text-[10px] sm:text-xs font-semibold ${activeTab === "orders"
+                ? "bg-[#7a5235] text-white"
+                : "bg-[#f5efe6] text-[#7a5235]"
+                }`}
             >
               {ordersList.length}
             </span>
@@ -2800,11 +2983,10 @@ export default function AdminDashboard() {
               setActiveTab("products");
               loadProducts();
             }}
-            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${
-              activeTab === "products"
-                ? "bg-[#3d281c] text-white shadow-sm"
-                : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
-            }`}
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${activeTab === "products"
+              ? "bg-[#3d281c] text-white shadow-sm"
+              : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
+              }`}
           >
             🛋️ Catalogue ({productsList.length})
           </button>
@@ -2814,11 +2996,10 @@ export default function AdminDashboard() {
               setActiveTab("options");
               loadFurnitureOptions();
             }}
-            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${
-              activeTab === "options"
-                ? "bg-[#3d281c] text-white shadow-sm"
-                : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
-            }`}
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap ${activeTab === "options"
+              ? "bg-[#3d281c] text-white shadow-sm"
+              : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
+              }`}
           >
             ⚙️ Master Options
           </button>
@@ -2828,19 +3009,17 @@ export default function AdminDashboard() {
               setActiveTab("users");
               loadUsers();
             }}
-            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 ${
-              activeTab === "users"
-                ? "bg-[#3d281c] text-white shadow-sm"
-                : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
-            }`}
+            className={`px-3.5 sm:px-5 py-2 sm:py-2.5 rounded-xl font-medium text-xs sm:text-sm transition shrink-0 whitespace-nowrap flex items-center gap-1.5 sm:gap-2 ${activeTab === "users"
+              ? "bg-[#3d281c] text-white shadow-sm"
+              : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
+              }`}
           >
             <span>👥 Users</span>
             <span
-              className={`rounded-full px-2 py-0.5 text-[10px] sm:text-xs font-semibold ${
-                activeTab === "users"
-                  ? "bg-[#7a5235] text-white"
-                  : "bg-[#f5efe6] text-[#7a5235]"
-              }`}
+              className={`rounded-full px-2 py-0.5 text-[10px] sm:text-xs font-semibold ${activeTab === "users"
+                ? "bg-[#7a5235] text-white"
+                : "bg-[#f5efe6] text-[#7a5235]"
+                }`}
             >
               {usersList.length}
             </span>
@@ -2891,13 +3070,7 @@ export default function AdminDashboard() {
                       <label className="block text-sm font-medium text-gray-700">
                         Category (Master) *
                       </label>
-                      <button
-                        type="button"
-                        onClick={() => setActiveTab("options")}
-                        className="text-xs text-[#7a5235] hover:underline font-medium"
-                      >
-                        + Manage in Master
-                      </button>
+
                     </div>
                     <select
                       required
@@ -2965,7 +3138,7 @@ export default function AdminDashboard() {
                         Product Images (Upload up to 5) *
                       </label>
                       <p className="text-xs text-gray-500 mt-0.5">
-                        First image will be the primary cover photo.
+                        First image is the <strong>Cover</strong>. Drag photos to reorder, or use ◀ ▶ buttons.
                       </p>
                     </div>
                     <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-white border border-[#ded5c8] text-[#7a5235]">
@@ -2993,32 +3166,133 @@ export default function AdminDashboard() {
                   )}
 
                   {productForm.image_previews.length > 0 && (
-                    <div className="grid grid-cols-3 sm:grid-cols-5 gap-2.5 pt-2">
-                      {productForm.image_previews.map((previewUrl, idx) => (
-                        <div
-                          key={idx}
-                          className="relative group rounded-xl overflow-hidden border border-gray-200 aspect-square bg-gray-100 shadow-2xs"
-                        >
-                          <img
-                            src={previewUrl}
-                            alt={`Preview ${idx + 1}`}
-                            className="w-full h-full object-cover"
-                          />
-                          {idx === 0 && (
-                            <span className="absolute top-1.5 left-1.5 bg-[#3d281c] text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow">
-                              Cover
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveProductImage(idx)}
-                            className="absolute top-1.5 right-1.5 bg-red-600 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs opacity-90 hover:opacity-100 active:scale-90 shadow transition"
-                            title="Remove image"
+                    <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5 pt-2">
+                      {productForm.image_previews.map((previewUrl, idx) => {
+                        const isCover = idx === 0;
+                        const isDragging = addDragIndex === idx;
+                        const isOver = addDragOverIndex === idx;
+
+                        return (
+                          <div
+                            key={idx}
+                            draggable
+                            onDragStart={(e) => {
+                              setAddDragIndex(idx);
+                              e.dataTransfer.effectAllowed = "move";
+                              e.dataTransfer.setData("text/plain", `${idx}`);
+                            }}
+                            onDragOver={(e) => {
+                              e.preventDefault();
+                              e.dataTransfer.dropEffect = "move";
+                              if (addDragOverIndex !== idx) setAddDragOverIndex(idx);
+                            }}
+                            onDragLeave={() => {
+                              if (addDragOverIndex === idx) setAddDragOverIndex(null);
+                            }}
+                            onDragEnd={() => {
+                              setAddDragIndex(null);
+                              setAddDragOverIndex(null);
+                            }}
+                            onDrop={(e) => {
+                              e.preventDefault();
+                              if (addDragIndex !== null && addDragIndex !== idx) {
+                                moveProductImage(addDragIndex, idx);
+                              }
+                              setAddDragIndex(null);
+                              setAddDragOverIndex(null);
+                            }}
+                            className={`relative group rounded-xl overflow-hidden aspect-square bg-gray-100 transition-all select-none cursor-grab active:cursor-grabbing ${isDragging
+                              ? "opacity-40 scale-95 ring-2 ring-dashed ring-[#7a5235]"
+                              : isOver
+                                ? "ring-2 ring-[#7a5235] scale-105 shadow-md"
+                                : "border border-gray-200 shadow-2xs hover:shadow-sm"
+                              }`}
+                            title="Drag to reorder"
                           >
-                            ✕
-                          </button>
-                        </div>
-                      ))}
+                            <img
+                              src={previewUrl}
+                              alt={`Preview ${idx + 1}`}
+                              className="w-full h-full object-cover pointer-events-none"
+                            />
+
+                            {/* Badge */}
+                            <div className="absolute top-1.5 left-1.5 flex items-center gap-1">
+                              {isCover ? (
+                                <span className="bg-[#3d281c] text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-0.5">
+                                  <span>★</span>
+                                  <span>Cover</span>
+                                </span>
+                              ) : (
+                                <span className="bg-black/60 backdrop-blur-xs text-white text-[9px] font-semibold px-1.5 py-0.5 rounded shadow">
+                                  #{idx + 1}
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Controls Bar */}
+                            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1 sm:p-1.5 flex items-center justify-between opacity-90 group-hover:opacity-100 transition">
+                              <div className="flex items-center gap-1">
+                                {idx > 0 && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      moveProductImage(idx, idx - 1);
+                                    }}
+                                    className="w-5 h-5 rounded bg-white/90 hover:bg-white text-gray-800 text-[10px] font-bold flex items-center justify-center shadow transition active:scale-90"
+                                    title="Move left"
+                                  >
+                                    ◀
+                                  </button>
+                                )}
+                                {idx < productForm.image_previews.length - 1 && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      moveProductImage(idx, idx + 1);
+                                    }}
+                                    className="w-5 h-5 rounded bg-white/90 hover:bg-white text-gray-800 text-[10px] font-bold flex items-center justify-center shadow transition active:scale-90"
+                                    title="Move right"
+                                  >
+                                    ▶
+                                  </button>
+                                )}
+                                {!isCover && (
+                                  <button
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      moveProductImage(idx, 0);
+                                    }}
+                                    className="px-1.5 py-0.5 rounded bg-white/90 hover:bg-white text-[#7a5235] text-[9px] font-bold shadow transition active:scale-90"
+                                    title="Set as cover photo"
+                                  >
+                                    Set Cover
+                                  </button>
+                                )}
+                              </div>
+
+                              <span className="text-[10px] text-white/80 font-mono tracking-tighter cursor-grab">
+                                ⠿
+                              </span>
+                            </div>
+
+                            {/* Delete Button */}
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleRemoveProductImage(idx);
+                              }}
+                              className="absolute top-1.5 right-1.5 bg-red-600 hover:bg-red-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow transition active:scale-90"
+                              title="Remove image"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>
@@ -3037,40 +3311,129 @@ export default function AdminDashboard() {
 
             {/* Products List */}
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <h3 className="text-xl font-serif font-semibold text-[#3d281c]">
-                  Current Products ({productsList.length})
-                </h3>
-                <button
-                  onClick={loadProducts}
-                  className="rounded-lg border border-[#e7dccd] bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
-                >
-                  Refresh
-                </button>
-              </div>
+              {(() => {
+                const rawCategories = Array.from(new Set(productsList.map((p) => p.category).filter(Boolean)));
+                rawCategories.sort((a, b) => {
+                  const orderA = getCategoryOrderIndex(a);
+                  const orderB = getCategoryOrderIndex(b);
+                  if (orderA !== orderB) return orderA - orderB;
+                  return a.localeCompare(b);
+                });
+                const uniqueCategories = ["All", ...rawCategories];
 
-              {productsList.length === 0 ? (
-                <div className="rounded-2xl bg-white border border-[#e7dccd] p-12 text-center text-gray-500">
-                  <p className="text-base font-medium">No products in catalogue yet.</p>
-                  <p className="text-xs mt-1 text-gray-400">
-                    Use the form above to add your first furniture design.
-                  </p>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-                    {productsList.map((product) => (
-                      <AdminProductCard
-                        key={product.id}
-                        product={product}
-                        onView={(index) =>
-                          setPreviewProduct({ product, activeIndex: index })
-                        }
-                        onEdit={() => openEditProduct(product)}
-                        onDelete={() => handleDeleteProduct(product)}
-                      />
-                    ))}
+                const groupedAdminCategories = Array.from(
+                  productsList.reduce((map, p) => {
+                    const cat = p.category?.trim() || "Other";
+                    if (!map.has(cat)) map.set(cat, []);
+                    map.get(cat)!.push(p);
+                    return map;
+                  }, new Map<string, CatalogueProduct[]>()).entries()
+                )
+                  .map(([categoryName, products]) => ({ categoryName, products }))
+                  .sort((a, b) => {
+                    const orderA = getCategoryOrderIndex(a.categoryName);
+                    const orderB = getCategoryOrderIndex(b.categoryName);
+                    if (orderA !== orderB) return orderA - orderB;
+                    return a.categoryName.localeCompare(b.categoryName);
+                  });
+
+                const displayedProducts =
+                  adminCategoryFilter === "All"
+                    ? groupedAdminCategories.flatMap((g) => g.products)
+                    : productsList.filter(
+                      (p) =>
+                        p.category?.trim().toLowerCase() ===
+                        adminCategoryFilter.trim().toLowerCase()
+                    );
+
+                return (
+                  <div className="space-y-4">
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <div>
+                        <h3 className="text-xl font-serif font-semibold text-[#3d281c]">
+                          Current Products ({productsList.length})
+                        </h3>
+                        <p className="text-xs text-gray-500 mt-0.5">
+                          Filter catalogue designs by category:
+                        </p>
+                      </div>
+
+                      <button
+                        onClick={loadProducts}
+                        className="rounded-lg border border-[#e7dccd] bg-white px-3 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-50"
+                      >
+                        Refresh
+                      </button>
+                    </div>
+
+                    {/* Ecommerce Category Filter Bar */}
+                    <div className="flex items-center gap-2 border-b border-[#ded5c8] pb-3 overflow-x-auto no-scrollbar -mx-4 px-4 sm:mx-0 sm:px-0 sm:flex-wrap">
+                      {uniqueCategories.map((cat) => {
+                        const count =
+                          cat === "All"
+                            ? productsList.length
+                            : productsList.filter(
+                              (p) =>
+                                p.category?.trim().toLowerCase() ===
+                                cat.trim().toLowerCase()
+                            ).length;
+                        const isSelected = adminCategoryFilter === cat;
+
+                        return (
+                          <button
+                            key={cat}
+                            type="button"
+                            onClick={() => setAdminCategoryFilter(cat)}
+                            className={`flex items-center gap-2 px-3.5 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium transition shrink-0 whitespace-nowrap ${isSelected
+                              ? "bg-[#3d281c] text-white shadow-sm"
+                              : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
+                              }`}
+                          >
+                            <span className="text-base">{getCategoryIcon(cat)}</span>
+                            <span>{cat}</span>
+                            <span
+                              className={`rounded-full px-2 py-0.5 text-[10px] sm:text-xs font-semibold ${isSelected
+                                ? "bg-[#7a5235] text-white"
+                                : "bg-[#f5efe6] text-[#7a5235]"
+                                }`}
+                            >
+                              {count}
+                            </span>
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {displayedProducts.length === 0 ? (
+                      <div className="rounded-2xl bg-white border border-[#e7dccd] p-12 text-center text-gray-500">
+                        <p className="text-base font-medium">No products found in category &ldquo;{adminCategoryFilter}&rdquo;.</p>
+                        <button
+                          type="button"
+                          onClick={() => setAdminCategoryFilter("All")}
+                          className="mt-3 text-xs text-[#8b5e3c] font-semibold hover:underline"
+                        >
+                          View all products →
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+                        {displayedProducts.map((product) => (
+                          <AdminProductCard
+                            key={product.id}
+                            product={product}
+                            onView={(index) =>
+                              setPreviewProduct({ product, activeIndex: index })
+                            }
+                            onEdit={() => openEditProduct(product)}
+                            onDelete={() => handleDeleteProduct(product)}
+                            onShare={() => setShareProduct(product as any)}
+                          />
+                        ))}
+                      </div>
+                    )}
                   </div>
-              )}
+                );
+              })()}
             </div>
           </div>
         ) : activeTab === "options" ? (
@@ -3309,19 +3672,17 @@ export default function AdminDashboard() {
                     key={tab.key}
                     type="button"
                     onClick={() => setOrderStatusFilter(tab.key)}
-                    className={`px-3 py-1.5 rounded-xl text-xs font-medium transition flex items-center gap-1.5 shrink-0 whitespace-nowrap ${
-                      orderStatusFilter === tab.key
-                        ? "bg-[#3d281c] text-white shadow-xs"
-                        : "bg-[#f5efe6] text-gray-700 hover:bg-[#ede3d5]"
-                    }`}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-medium transition flex items-center gap-1.5 shrink-0 whitespace-nowrap ${orderStatusFilter === tab.key
+                      ? "bg-[#3d281c] text-white shadow-xs"
+                      : "bg-[#f5efe6] text-gray-700 hover:bg-[#ede3d5]"
+                      }`}
                   >
                     <span>{tab.label}</span>
                     <span
-                      className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${
-                        orderStatusFilter === tab.key
-                          ? "bg-white/20 text-white"
-                          : "bg-white text-gray-600"
-                      }`}
+                      className={`rounded-full px-1.5 py-0.2 text-[10px] font-bold ${orderStatusFilter === tab.key
+                        ? "bg-white/20 text-white"
+                        : "bg-white text-gray-600"
+                        }`}
                     >
                       {tab.count}
                     </span>
@@ -3885,22 +4246,20 @@ export default function AdminDashboard() {
                   <button
                     type="button"
                     onClick={() => setUserRoleFilter("All")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 ${
-                      userRoleFilter === "All"
-                        ? "bg-[#3d281c] text-white shadow-2xs"
-                        : "bg-[#faf7f2] text-gray-600 hover:bg-gray-100 border border-gray-200"
-                    }`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 ${userRoleFilter === "All"
+                      ? "bg-[#3d281c] text-white shadow-2xs"
+                      : "bg-[#faf7f2] text-gray-600 hover:bg-gray-100 border border-gray-200"
+                      }`}
                   >
                     All ({usersList.length})
                   </button>
                   <button
                     type="button"
                     onClick={() => setUserRoleFilter("Admin")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 flex items-center gap-1 ${
-                      userRoleFilter === "Admin"
-                        ? "bg-amber-700 text-white shadow-2xs"
-                        : "bg-[#faf7f2] text-gray-600 hover:bg-gray-100 border border-gray-200"
-                    }`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 flex items-center gap-1 ${userRoleFilter === "Admin"
+                      ? "bg-amber-700 text-white shadow-2xs"
+                      : "bg-[#faf7f2] text-gray-600 hover:bg-gray-100 border border-gray-200"
+                      }`}
                   >
                     <span>👑 Admins</span>
                     <span>({usersList.filter((u) => u.is_admin).length})</span>
@@ -3908,11 +4267,10 @@ export default function AdminDashboard() {
                   <button
                     type="button"
                     onClick={() => setUserRoleFilter("Customer")}
-                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 flex items-center gap-1 ${
-                      userRoleFilter === "Customer"
-                        ? "bg-slate-700 text-white shadow-2xs"
-                        : "bg-[#faf7f2] text-gray-600 hover:bg-gray-100 border border-gray-200"
-                    }`}
+                    className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition shrink-0 flex items-center gap-1 ${userRoleFilter === "Customer"
+                      ? "bg-slate-700 text-white shadow-2xs"
+                      : "bg-[#faf7f2] text-gray-600 hover:bg-gray-100 border border-gray-200"
+                      }`}
                   >
                     <span>👤 Customers</span>
                     <span>({usersList.filter((u) => !u.is_admin).length})</span>
@@ -3992,11 +4350,10 @@ export default function AdminDashboard() {
                                 <td className="px-5 py-4">
                                   <div className="flex items-center gap-3">
                                     <div
-                                      className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
-                                        user.is_admin
-                                          ? "bg-amber-100 text-amber-900 border border-amber-300"
-                                          : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
-                                      }`}
+                                      className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${user.is_admin
+                                        ? "bg-amber-100 text-amber-900 border border-amber-300"
+                                        : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
+                                        }`}
                                     >
                                       {initials}
                                     </div>
@@ -4065,21 +4422,19 @@ export default function AdminDashboard() {
                                 <td className="px-5 py-4">
                                   <div className="flex items-center gap-2 text-xs">
                                     <span
-                                      className={`px-2 py-0.5 rounded font-medium ${
-                                        user.total_requests > 0
-                                          ? "bg-[#f5efe6] text-[#7a5235] font-semibold"
-                                          : "bg-gray-100 text-gray-500"
-                                      }`}
+                                      className={`px-2 py-0.5 rounded font-medium ${user.total_requests > 0
+                                        ? "bg-[#f5efe6] text-[#7a5235] font-semibold"
+                                        : "bg-gray-100 text-gray-500"
+                                        }`}
                                       title={`${user.total_requests} custom requests submitted`}
                                     >
                                       📋 {user.total_requests} {user.total_requests === 1 ? "req" : "reqs"}
                                     </span>
                                     <span
-                                      className={`px-2 py-0.5 rounded font-medium ${
-                                        user.total_orders > 0
-                                          ? "bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200"
-                                          : "bg-gray-100 text-gray-500"
-                                      }`}
+                                      className={`px-2 py-0.5 rounded font-medium ${user.total_orders > 0
+                                        ? "bg-emerald-50 text-emerald-800 font-semibold border border-emerald-200"
+                                        : "bg-gray-100 text-gray-500"
+                                        }`}
                                       title={`${user.total_orders} orders placed`}
                                     >
                                       📦 {user.total_orders} {user.total_orders === 1 ? "order" : "orders"}
@@ -4091,10 +4446,10 @@ export default function AdminDashboard() {
                                 <td className="px-5 py-4 text-xs text-gray-500 whitespace-nowrap">
                                   {user.created_at
                                     ? new Date(user.created_at).toLocaleDateString("en-IN", {
-                                        day: "numeric",
-                                        month: "short",
-                                        year: "numeric",
-                                      })
+                                      day: "numeric",
+                                      month: "short",
+                                      year: "numeric",
+                                    })
                                     : "-"}
                                 </td>
 
@@ -4125,11 +4480,10 @@ export default function AdminDashboard() {
                                     <button
                                       type="button"
                                       onClick={() => handleToggleAdminRole(user)}
-                                      className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${
-                                        user.is_admin
-                                          ? "bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200"
-                                          : "bg-[#3d281c] text-white hover:bg-[#5a3927]"
-                                      }`}
+                                      className={`rounded-lg px-2.5 py-1.5 text-xs font-semibold transition ${user.is_admin
+                                        ? "bg-amber-50 text-amber-800 hover:bg-amber-100 border border-amber-200"
+                                        : "bg-[#3d281c] text-white hover:bg-[#5a3927]"
+                                        }`}
                                       title={user.is_admin ? "Demote to customer" : "Promote to administrator"}
                                     >
                                       {user.is_admin ? "Demote" : "👑 Make Admin"}
@@ -4140,11 +4494,10 @@ export default function AdminDashboard() {
                                       type="button"
                                       onClick={() => handleDeleteUser(user)}
                                       disabled={isSelf}
-                                      className={`rounded-lg px-2 py-1.5 text-xs font-semibold transition ${
-                                        isSelf
-                                          ? "opacity-30 cursor-not-allowed text-gray-400"
-                                          : "text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200"
-                                      }`}
+                                      className={`rounded-lg px-2 py-1.5 text-xs font-semibold transition ${isSelf
+                                        ? "opacity-30 cursor-not-allowed text-gray-400"
+                                        : "text-rose-600 hover:bg-rose-50 border border-transparent hover:border-rose-200"
+                                        }`}
                                       title={isSelf ? "You cannot delete your own account" : "Delete user account"}
                                     >
                                       🗑️
@@ -4177,11 +4530,10 @@ export default function AdminDashboard() {
                             <div className="flex items-start justify-between gap-3">
                               <div className="flex items-center gap-3">
                                 <div
-                                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
-                                    user.is_admin
-                                      ? "bg-amber-100 text-amber-900 border border-amber-300"
-                                      : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
-                                  }`}
+                                  className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${user.is_admin
+                                    ? "bg-amber-100 text-amber-900 border border-amber-300"
+                                    : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
+                                    }`}
                                 >
                                   {initials}
                                 </div>
@@ -4246,11 +4598,10 @@ export default function AdminDashboard() {
                               <button
                                 type="button"
                                 onClick={() => handleToggleAdminRole(user)}
-                                className={`py-2 text-center rounded-lg text-xs font-semibold transition ${
-                                  user.is_admin
-                                    ? "bg-amber-50 text-amber-800 border border-amber-200"
-                                    : "bg-[#3d281c] text-white"
-                                }`}
+                                className={`py-2 text-center rounded-lg text-xs font-semibold transition ${user.is_admin
+                                  ? "bg-amber-50 text-amber-800 border border-amber-200"
+                                  : "bg-[#3d281c] text-white"
+                                  }`}
                               >
                                 {user.is_admin ? "Demote" : "👑 Admin"}
                               </button>
@@ -4259,11 +4610,10 @@ export default function AdminDashboard() {
                                 type="button"
                                 onClick={() => handleDeleteUser(user)}
                                 disabled={isSelf}
-                                className={`py-2 text-center rounded-lg text-xs font-semibold transition ${
-                                  isSelf
-                                    ? "opacity-30 cursor-not-allowed bg-gray-100 text-gray-400"
-                                    : "bg-rose-50 text-rose-700 border border-rose-200"
-                                }`}
+                                className={`py-2 text-center rounded-lg text-xs font-semibold transition ${isSelf
+                                  ? "opacity-30 cursor-not-allowed bg-gray-100 text-gray-400"
+                                  : "bg-rose-50 text-rose-700 border border-rose-200"
+                                  }`}
                               >
                                 🗑️ Del
                               </button>
@@ -4290,378 +4640,378 @@ export default function AdminDashboard() {
               </p>
             </div>
 
-        {/* Stats */}
-        <div className="grid grid-cols-3 gap-2.5 sm:gap-5 mb-6 sm:mb-8">
-          <div className="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-[#e7dccd]">
-            <p className="text-[11px] sm:text-sm text-gray-500 font-medium">
-              Total Requests
-            </p>
+            {/* Stats */}
+            <div className="grid grid-cols-3 gap-2.5 sm:gap-5 mb-6 sm:mb-8">
+              <div className="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-[#e7dccd]">
+                <p className="text-[11px] sm:text-sm text-gray-500 font-medium">
+                  Total Requests
+                </p>
 
-            <p className="text-xl sm:text-3xl font-semibold text-[#3d281c] mt-1 sm:mt-2">
-              {requests.length}
-            </p>
-          </div>
+                <p className="text-xl sm:text-3xl font-semibold text-[#3d281c] mt-1 sm:mt-2">
+                  {requests.length}
+                </p>
+              </div>
 
-          <div className="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-[#e7dccd]">
-            <p className="text-[11px] sm:text-sm text-amber-700 font-medium">
-              New
-            </p>
+              <div className="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-[#e7dccd]">
+                <p className="text-[11px] sm:text-sm text-amber-700 font-medium">
+                  New
+                </p>
 
-            <p className="text-xl sm:text-3xl font-semibold text-amber-800 mt-1 sm:mt-2">
-              {newRequests}
-            </p>
-          </div>
+                <p className="text-xl sm:text-3xl font-semibold text-amber-800 mt-1 sm:mt-2">
+                  {newRequests}
+                </p>
+              </div>
 
-          <div className="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-[#e7dccd]">
-            <p className="text-[11px] sm:text-sm text-emerald-700 font-medium">
-              In Progress
-            </p>
+              <div className="bg-white rounded-xl p-3 sm:p-6 shadow-sm border border-[#e7dccd]">
+                <p className="text-[11px] sm:text-sm text-emerald-700 font-medium">
+                  In Progress
+                </p>
 
-            <p className="text-xl sm:text-3xl font-semibold text-emerald-800 mt-1 sm:mt-2">
-              {inProgressRequests}
-            </p>
-          </div>
-        </div>
-
-        {/* Error */}
-        {error && (
-          <div className="mb-6 rounded-lg bg-red-50 border border-red-200 text-red-700 p-4">
-            <div className="flex items-center justify-between gap-4">
-              <span>{error}</span>
-
-              <button
-                onClick={loadRequests}
-                className="shrink-0 rounded-lg border border-red-300 px-3 py-1.5 text-sm hover:bg-red-100"
-              >
-                Retry
-              </button>
+                <p className="text-xl sm:text-3xl font-semibold text-emerald-800 mt-1 sm:mt-2">
+                  {inProgressRequests}
+                </p>
+              </div>
             </div>
-          </div>
-        )}
 
-        {/* Requests */}
-        <div className="bg-white rounded-xl shadow-sm border border-[#e7dccd] overflow-hidden">
-          <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 flex items-center justify-between">
-            <h3 className="text-base sm:text-xl font-semibold text-[#3d281c]">
-              Custom Furniture Requests
-            </h3>
+            {/* Error */}
+            {error && (
+              <div className="mb-6 rounded-lg bg-red-50 border border-red-200 text-red-700 p-4">
+                <div className="flex items-center justify-between gap-4">
+                  <span>{error}</span>
 
-            <button
-              onClick={loadRequests}
-              disabled={loading}
-              className="text-xs sm:text-sm px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-[#7a5235] text-[#7a5235] hover:bg-[#f5efe6] disabled:opacity-50"
-            >
-              {loading ? "Refreshing..." : "Refresh"}
-            </button>
-          </div>
+                  <button
+                    onClick={loadRequests}
+                    className="shrink-0 rounded-lg border border-red-300 px-3 py-1.5 text-sm hover:bg-red-100"
+                  >
+                    Retry
+                  </button>
+                </div>
+              </div>
+            )}
 
-          {loading ? (
-            <div className="p-10 text-center text-gray-500">
-              Loading requests...
-            </div>
-          ) : requests.length === 0 ? (
-            <div className="p-10 text-center text-gray-500">
-              No customer requests found.
-            </div>
-          ) : (
-            <>
-              {/* Desktop Table View */}
-              <div className="hidden lg:block overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-[#faf7f2]">
-                    <tr>
-                      <th className="text-left px-6 py-4">Request ID</th>
-                      <th className="text-left px-6 py-4">Customer</th>
-                      <th className="text-left px-6 py-4">Furniture</th>
-                      <th className="text-left px-6 py-4">Material</th>
-                      <th className="text-left px-6 py-4">Location</th>
-                      <th className="text-left px-6 py-4">Status</th>
-                      <th className="text-left px-6 py-4">Date</th>
-                      <th className="text-left px-6 py-4">Action</th>
-                    </tr>
-                  </thead>
+            {/* Requests */}
+            <div className="bg-white rounded-xl shadow-sm border border-[#e7dccd] overflow-hidden">
+              <div className="px-4 sm:px-6 py-4 sm:py-5 border-b border-gray-200 flex items-center justify-between">
+                <h3 className="text-base sm:text-xl font-semibold text-[#3d281c]">
+                  Custom Furniture Requests
+                </h3>
 
-                  <tbody>
+                <button
+                  onClick={loadRequests}
+                  disabled={loading}
+                  className="text-xs sm:text-sm px-3 sm:px-4 py-1.5 sm:py-2 rounded-lg border border-[#7a5235] text-[#7a5235] hover:bg-[#f5efe6] disabled:opacity-50"
+                >
+                  {loading ? "Refreshing..." : "Refresh"}
+                </button>
+              </div>
+
+              {loading ? (
+                <div className="p-10 text-center text-gray-500">
+                  Loading requests...
+                </div>
+              ) : requests.length === 0 ? (
+                <div className="p-10 text-center text-gray-500">
+                  No customer requests found.
+                </div>
+              ) : (
+                <>
+                  {/* Desktop Table View */}
+                  <div className="hidden lg:block overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead className="bg-[#faf7f2]">
+                        <tr>
+                          <th className="text-left px-6 py-4">Request ID</th>
+                          <th className="text-left px-6 py-4">Customer</th>
+                          <th className="text-left px-6 py-4">Furniture</th>
+                          <th className="text-left px-6 py-4">Material</th>
+                          <th className="text-left px-6 py-4">Location</th>
+                          <th className="text-left px-6 py-4">Status</th>
+                          <th className="text-left px-6 py-4">Date</th>
+                          <th className="text-left px-6 py-4">Action</th>
+                        </tr>
+                      </thead>
+
+                      <tbody>
+                        {requests.map((request) => {
+                          const quotation = quotations[request.id];
+                          const canCreateQuotation =
+                            !quotation ||
+                            quotation.status === "Rejected" ||
+                            quotation.status === "Expired";
+
+                          return (
+                            <tr
+                              key={request.id}
+                              className="border-t border-gray-100 hover:bg-[#faf7f2]"
+                            >
+                              <td className="px-6 py-4 font-medium text-[#7a5235]">
+                                {request.request_id}
+                              </td>
+
+                              <td className="px-6 py-4">
+                                <div className="font-medium text-gray-900">
+                                  {request.full_name}
+                                </div>
+                                <div className="text-gray-500">{request.mobile}</div>
+                                {request.email && (
+                                  <div className="text-gray-400 text-xs">{request.email}</div>
+                                )}
+                              </td>
+
+                              <td className="px-6 py-4">
+                                <div className="font-medium text-gray-900">
+                                  {request.furniture_type}
+                                </div>
+                                {(request.length || request.width || request.height) && (
+                                  <div className="text-xs text-[#7a5235] font-mono mt-0.5">
+                                    📐 {[
+                                      request.length ? `L:${request.length}` : null,
+                                      request.width ? `W:${request.width}` : null,
+                                      request.height ? `H:${request.height}` : null,
+                                    ].filter(Boolean).join(" × ")}
+                                  </div>
+                                )}
+                              </td>
+
+                              <td className="px-6 py-4">
+                                {request.preferred_material || "-"}
+                              </td>
+
+                              <td className="px-6 py-4">
+                                {request.delivery_location || "-"}
+                              </td>
+
+                              <td className="px-6 py-4">
+                                <div className="flex flex-col gap-1.5 items-start">
+                                  <span
+                                    className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getStatusClasses(
+                                      request.status
+                                    )}`}
+                                  >
+                                    {request.status}
+                                  </span>
+                                  {(() => {
+                                    const relatedOrder = ordersList.find(
+                                      (o) => o.request_id === request.id
+                                    );
+                                    if (!relatedOrder) return null;
+                                    return (
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setActiveTab("orders");
+                                          setSelectedOrderDetails(relatedOrder);
+                                          setEditingDeliveryDate(
+                                            relatedOrder.expected_delivery_date
+                                              ? relatedOrder.expected_delivery_date.split("T")[0]
+                                              : ""
+                                          );
+                                        }}
+                                        className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full transition shadow-2xs"
+                                        title="View order tracking in Orders tab"
+                                      >
+                                        📦 Order: {relatedOrder.status} →
+                                      </button>
+                                    );
+                                  })()}
+                                </div>
+                              </td>
+
+                              <td className="px-6 py-4 whitespace-nowrap">
+                                {new Date(request.created_at).toLocaleDateString("en-IN")}
+                              </td>
+
+                              <td className="px-6 py-4">
+                                <div className="flex items-center gap-2">
+                                  {canCreateQuotation ? (
+                                    <button
+                                      onClick={() => openCreateQuotation(request)}
+                                      className="whitespace-nowrap rounded-lg bg-[#5a3927] text-white px-3 py-1.5 text-xs font-medium hover:bg-[#432a1e] transition"
+                                    >
+                                      {quotation ? "New Quotation" : "Create Quotation"}
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => openViewQuotation(request, quotation)}
+                                      className="whitespace-nowrap rounded-lg border border-[#7a5235] text-[#7a5235] px-3 py-1.5 text-xs font-medium hover:bg-[#f5efe6] transition"
+                                    >
+                                      View Quotation
+                                    </button>
+                                  )}
+
+                                  <button
+                                    type="button"
+                                    onClick={() => handleDeleteRequest(request)}
+                                    className="whitespace-nowrap rounded-lg text-xs font-medium text-red-600 hover:text-red-800 hover:bg-red-50 px-2.5 py-1.5 transition border border-red-200"
+                                    title={`Delete request ${request.request_id}`}
+                                  >
+                                    Delete
+                                  </button>
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile Card View */}
+                  <div className="lg:hidden p-3 space-y-3 bg-[#faf7f2]/50">
                     {requests.map((request) => {
                       const quotation = quotations[request.id];
                       const canCreateQuotation =
                         !quotation ||
                         quotation.status === "Rejected" ||
                         quotation.status === "Expired";
+                      const relatedOrder = ordersList.find(
+                        (o) => o.request_id === request.id
+                      );
 
                       return (
-                        <tr
+                        <div
                           key={request.id}
-                          className="border-t border-gray-100 hover:bg-[#faf7f2]"
+                          className="bg-white rounded-2xl p-4 border border-[#e7dccd] shadow-2xs space-y-3 text-left"
                         >
-                          <td className="px-6 py-4 font-medium text-[#7a5235]">
-                            {request.request_id}
-                          </td>
-
-                          <td className="px-6 py-4">
-                            <div className="font-medium text-gray-900">
-                              {request.full_name}
-                            </div>
-                            <div className="text-gray-500">{request.mobile}</div>
-                            {request.email && (
-                              <div className="text-gray-400 text-xs">{request.email}</div>
-                            )}
-                          </td>
-
-                          <td className="px-6 py-4">
-                            <div className="font-medium text-gray-900">
-                              {request.furniture_type}
-                            </div>
-                            {(request.length || request.width || request.height) && (
-                              <div className="text-xs text-[#7a5235] font-mono mt-0.5">
-                                📐 {[
-                                  request.length ? `L:${request.length}` : null,
-                                  request.width ? `W:${request.width}` : null,
-                                  request.height ? `H:${request.height}` : null,
-                                ].filter(Boolean).join(" × ")}
-                              </div>
-                            )}
-                          </td>
-
-                          <td className="px-6 py-4">
-                            {request.preferred_material || "-"}
-                          </td>
-
-                          <td className="px-6 py-4">
-                            {request.delivery_location || "-"}
-                          </td>
-
-                          <td className="px-6 py-4">
-                            <div className="flex flex-col gap-1.5 items-start">
-                              <span
-                                className={`inline-flex rounded-full px-3 py-1 text-xs font-medium ${getStatusClasses(
-                                  request.status
-                                )}`}
-                              >
-                                {request.status}
-                              </span>
-                              {(() => {
-                                const relatedOrder = ordersList.find(
-                                  (o) => o.request_id === request.id
-                                );
-                                if (!relatedOrder) return null;
-                                return (
-                                  <button
-                                    type="button"
-                                    onClick={() => {
-                                      setActiveTab("orders");
-                                      setSelectedOrderDetails(relatedOrder);
-                                      setEditingDeliveryDate(
-                                        relatedOrder.expected_delivery_date
-                                          ? relatedOrder.expected_delivery_date.split("T")[0]
-                                          : ""
-                                      );
-                                    }}
-                                    className="inline-flex items-center gap-1 text-[11px] font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-2 py-0.5 rounded-full transition shadow-2xs"
-                                    title="View order tracking in Orders tab"
-                                  >
-                                    📦 Order: {relatedOrder.status} →
-                                  </button>
-                                );
-                              })()}
-                            </div>
-                          </td>
-
-                          <td className="px-6 py-4 whitespace-nowrap">
-                            {new Date(request.created_at).toLocaleDateString("en-IN")}
-                          </td>
-
-                          <td className="px-6 py-4">
+                          {/* Top Header */}
+                          <div className="flex items-center justify-between gap-2">
                             <div className="flex items-center gap-2">
-                              {canCreateQuotation ? (
-                                <button
-                                  onClick={() => openCreateQuotation(request)}
-                                  className="whitespace-nowrap rounded-lg bg-[#5a3927] text-white px-3 py-1.5 text-xs font-medium hover:bg-[#432a1e] transition"
-                                >
-                                  {quotation ? "New Quotation" : "Create Quotation"}
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => openViewQuotation(request, quotation)}
-                                  className="whitespace-nowrap rounded-lg border border-[#7a5235] text-[#7a5235] px-3 py-1.5 text-xs font-medium hover:bg-[#f5efe6] transition"
-                                >
-                                  View Quotation
-                                </button>
-                              )}
-
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteRequest(request)}
-                                className="whitespace-nowrap rounded-lg text-xs font-medium text-red-600 hover:text-red-800 hover:bg-red-50 px-2.5 py-1.5 transition border border-red-200"
-                                title={`Delete request ${request.request_id}`}
-                              >
-                                Delete
-                              </button>
+                              <span className="font-mono font-bold text-xs text-[#7a5235] bg-[#f5efe6] px-2 py-0.5 rounded-md border border-[#e7dccd]">
+                                {request.request_id}
+                              </span>
+                              <span className="text-[11px] text-gray-400">
+                                {new Date(request.created_at).toLocaleDateString("en-IN", {
+                                  day: "2-digit",
+                                  month: "short",
+                                })}
+                              </span>
                             </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-
-              {/* Mobile Card View */}
-              <div className="lg:hidden p-3 space-y-3 bg-[#faf7f2]/50">
-                {requests.map((request) => {
-                  const quotation = quotations[request.id];
-                  const canCreateQuotation =
-                    !quotation ||
-                    quotation.status === "Rejected" ||
-                    quotation.status === "Expired";
-                  const relatedOrder = ordersList.find(
-                    (o) => o.request_id === request.id
-                  );
-
-                  return (
-                    <div
-                      key={request.id}
-                      className="bg-white rounded-2xl p-4 border border-[#e7dccd] shadow-2xs space-y-3 text-left"
-                    >
-                      {/* Top Header */}
-                      <div className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-2">
-                          <span className="font-mono font-bold text-xs text-[#7a5235] bg-[#f5efe6] px-2 py-0.5 rounded-md border border-[#e7dccd]">
-                            {request.request_id}
-                          </span>
-                          <span className="text-[11px] text-gray-400">
-                            {new Date(request.created_at).toLocaleDateString("en-IN", {
-                              day: "2-digit",
-                              month: "short",
-                            })}
-                          </span>
-                        </div>
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${getStatusClasses(
-                            request.status
-                          )}`}
-                        >
-                          {request.status}
-                        </span>
-                      </div>
-
-                      {/* Customer Info */}
-                      <div className="pt-1 border-t border-gray-100">
-                        <p className="font-semibold text-gray-900 text-sm">
-                          {request.full_name}
-                        </p>
-                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
-                          {request.mobile && (
-                            <a
-                              href={`tel:${request.mobile}`}
-                              className="inline-flex items-center gap-1 text-xs text-[#7a5235] font-semibold bg-[#faf7f2] px-2.5 py-1 rounded-lg border border-[#ded5c8]"
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-0.5 text-[11px] font-semibold ${getStatusClasses(
+                                request.status
+                              )}`}
                             >
-                              <span>📞</span>
-                              <span>{request.mobile}</span>
-                            </a>
-                          )}
-                          {request.email && (
-                            <a
-                              href={`mailto:${request.email}`}
-                              className="inline-flex items-center gap-1 text-[11px] text-gray-600 max-w-[170px] truncate bg-[#faf7f2] px-2 py-1 rounded-lg border border-[#ded5c8]"
-                              title={request.email}
-                            >
-                              <span>✉️</span>
-                              <span className="truncate">{request.email}</span>
-                            </a>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Design & Specifications */}
-                      <div className="bg-[#faf7f2] rounded-xl p-3 border border-[#ded5c8] space-y-1.5 text-xs">
-                        <div className="flex justify-between items-baseline">
-                          <span className="text-gray-500 font-medium">Item:</span>
-                          <span className="font-semibold text-[#3d281c]">{request.furniture_type}</span>
-                        </div>
-                        {(request.length || request.width || request.height) && (
-                          <div className="flex justify-between items-baseline">
-                            <span className="text-gray-500 font-medium">Dimensions:</span>
-                            <span className="font-mono text-[#7a5235] font-semibold">
-                              {[
-                                request.length ? `L:${request.length}` : null,
-                                request.width ? `W:${request.width}` : null,
-                                request.height ? `H:${request.height}` : null,
-                              ].filter(Boolean).join(" × ")}
+                              {request.status}
                             </span>
                           </div>
-                        )}
-                        <div className="flex justify-between items-baseline">
-                          <span className="text-gray-500 font-medium">Material:</span>
-                          <span className="text-gray-700">{request.preferred_material || "Not specified"}</span>
-                        </div>
-                        <div className="flex justify-between items-baseline">
-                          <span className="text-gray-500 font-medium">Location:</span>
-                          <span className="text-gray-700 truncate max-w-[180px]">{request.delivery_location || "Not specified"}</span>
-                        </div>
-                        {request.requirement && (
-                          <div className="pt-1 border-t border-[#e7dccd]/70 text-[11px] text-gray-600 italic">
-                            &ldquo;{request.requirement.slice(0, 90)}{request.requirement.length > 90 ? "..." : ""}&rdquo;
+
+                          {/* Customer Info */}
+                          <div className="pt-1 border-t border-gray-100">
+                            <p className="font-semibold text-gray-900 text-sm">
+                              {request.full_name}
+                            </p>
+                            <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                              {request.mobile && (
+                                <a
+                                  href={`tel:${request.mobile}`}
+                                  className="inline-flex items-center gap-1 text-xs text-[#7a5235] font-semibold bg-[#faf7f2] px-2.5 py-1 rounded-lg border border-[#ded5c8]"
+                                >
+                                  <span>📞</span>
+                                  <span>{request.mobile}</span>
+                                </a>
+                              )}
+                              {request.email && (
+                                <a
+                                  href={`mailto:${request.email}`}
+                                  className="inline-flex items-center gap-1 text-[11px] text-gray-600 max-w-[170px] truncate bg-[#faf7f2] px-2 py-1 rounded-lg border border-[#ded5c8]"
+                                  title={request.email}
+                                >
+                                  <span>✉️</span>
+                                  <span className="truncate">{request.email}</span>
+                                </a>
+                              )}
+                            </div>
                           </div>
-                        )}
-                      </div>
 
-                      {/* Related Order pill if any */}
-                      {relatedOrder && (
-                        <div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setActiveTab("orders");
-                              setSelectedOrderDetails(relatedOrder);
-                              setEditingDeliveryDate(
-                                relatedOrder.expected_delivery_date
-                                  ? relatedOrder.expected_delivery_date.split("T")[0]
-                                  : ""
-                              );
-                            }}
-                            className="w-full inline-flex items-center justify-between text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-xl transition"
-                          >
-                            <span>📦 Order: {relatedOrder.order_number}</span>
-                            <span>{relatedOrder.status} →</span>
-                          </button>
+                          {/* Design & Specifications */}
+                          <div className="bg-[#faf7f2] rounded-xl p-3 border border-[#ded5c8] space-y-1.5 text-xs">
+                            <div className="flex justify-between items-baseline">
+                              <span className="text-gray-500 font-medium">Item:</span>
+                              <span className="font-semibold text-[#3d281c]">{request.furniture_type}</span>
+                            </div>
+                            {(request.length || request.width || request.height) && (
+                              <div className="flex justify-between items-baseline">
+                                <span className="text-gray-500 font-medium">Dimensions:</span>
+                                <span className="font-mono text-[#7a5235] font-semibold">
+                                  {[
+                                    request.length ? `L:${request.length}` : null,
+                                    request.width ? `W:${request.width}` : null,
+                                    request.height ? `H:${request.height}` : null,
+                                  ].filter(Boolean).join(" × ")}
+                                </span>
+                              </div>
+                            )}
+                            <div className="flex justify-between items-baseline">
+                              <span className="text-gray-500 font-medium">Material:</span>
+                              <span className="text-gray-700">{request.preferred_material || "Not specified"}</span>
+                            </div>
+                            <div className="flex justify-between items-baseline">
+                              <span className="text-gray-500 font-medium">Location:</span>
+                              <span className="text-gray-700 truncate max-w-[180px]">{request.delivery_location || "Not specified"}</span>
+                            </div>
+                            {request.requirement && (
+                              <div className="pt-1 border-t border-[#e7dccd]/70 text-[11px] text-gray-600 italic">
+                                &ldquo;{request.requirement.slice(0, 90)}{request.requirement.length > 90 ? "..." : ""}&rdquo;
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Related Order pill if any */}
+                          {relatedOrder && (
+                            <div>
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setActiveTab("orders");
+                                  setSelectedOrderDetails(relatedOrder);
+                                  setEditingDeliveryDate(
+                                    relatedOrder.expected_delivery_date
+                                      ? relatedOrder.expected_delivery_date.split("T")[0]
+                                      : ""
+                                  );
+                                }}
+                                className="w-full inline-flex items-center justify-between text-xs font-semibold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3 py-1.5 rounded-xl transition"
+                              >
+                                <span>📦 Order: {relatedOrder.order_number}</span>
+                                <span>{relatedOrder.status} →</span>
+                              </button>
+                            </div>
+                          )}
+
+                          {/* Card Action Buttons */}
+                          <div className="grid grid-cols-2 gap-2 pt-1 border-t border-gray-100">
+                            {canCreateQuotation ? (
+                              <button
+                                onClick={() => openCreateQuotation(request)}
+                                className="w-full rounded-xl bg-[#5a3927] text-white py-2 text-xs font-semibold hover:bg-[#432a1e] transition shadow-xs text-center"
+                              >
+                                {quotation ? "+ New Quote" : "+ Create Quote"}
+                              </button>
+                            ) : (
+                              <button
+                                onClick={() => openViewQuotation(request, quotation)}
+                                className="w-full rounded-xl border border-[#7a5235] text-[#7a5235] py-2 text-xs font-semibold hover:bg-[#f5efe6] transition text-center"
+                              >
+                                👁️ View Quote
+                              </button>
+                            )}
+
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteRequest(request)}
+                              className="w-full rounded-xl text-xs font-semibold text-red-600 hover:text-red-800 hover:bg-red-50 py-2 transition border border-red-200 text-center"
+                            >
+                              🗑️ Delete
+                            </button>
+                          </div>
                         </div>
-                      )}
-
-                      {/* Card Action Buttons */}
-                      <div className="grid grid-cols-2 gap-2 pt-1 border-t border-gray-100">
-                        {canCreateQuotation ? (
-                          <button
-                            onClick={() => openCreateQuotation(request)}
-                            className="w-full rounded-xl bg-[#5a3927] text-white py-2 text-xs font-semibold hover:bg-[#432a1e] transition shadow-xs text-center"
-                          >
-                            {quotation ? "+ New Quote" : "+ Create Quote"}
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => openViewQuotation(request, quotation)}
-                            className="w-full rounded-xl border border-[#7a5235] text-[#7a5235] py-2 text-xs font-semibold hover:bg-[#f5efe6] transition text-center"
-                          >
-                            👁️ View Quote
-                          </button>
-                        )}
-
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteRequest(request)}
-                          className="w-full rounded-xl text-xs font-semibold text-red-600 hover:text-red-800 hover:bg-red-50 py-2 transition border border-red-200 text-center"
-                        >
-                          🗑️ Delete
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </>
-          )}
-        </div>
-        </>
+                      );
+                    })}
+                  </div>
+                </>
+              )}
+            </div>
+          </>
         )}
       </section>
 
@@ -4678,8 +5028,8 @@ export default function AdminDashboard() {
                     {quotationMode === "view"
                       ? "Quotation Details"
                       : selectedQuotation
-                      ? "Create New Quotation"
-                      : "Create Quotation"}
+                        ? "Create New Quotation"
+                        : "Create Quotation"}
                   </h3>
 
                   <p className="text-xs sm:text-sm text-gray-500 mt-1">
@@ -4894,11 +5244,10 @@ export default function AdminDashboard() {
 
                 {quotationMessage && (
                   <div
-                    className={`rounded-lg p-3 text-sm ${
-                      quotationMessage.type === "success"
-                        ? "bg-green-50 border border-green-200 text-green-700"
-                        : "bg-red-50 border border-red-200 text-red-700"
-                    }`}
+                    className={`rounded-lg p-3 text-sm ${quotationMessage.type === "success"
+                      ? "bg-green-50 border border-green-200 text-green-700"
+                      : "bg-red-50 border border-red-200 text-red-700"
+                      }`}
                   >
                     {quotationMessage.text}
                   </div>
@@ -5070,11 +5419,10 @@ export default function AdminDashboard() {
                 {/* Message */}
                 {quotationMessage && (
                   <div
-                    className={`rounded-lg p-3 text-sm ${
-                      quotationMessage.type === "success"
-                        ? "bg-green-50 border border-green-200 text-green-700"
-                        : "bg-red-50 border border-red-200 text-red-700"
-                    }`}
+                    className={`rounded-lg p-3 text-sm ${quotationMessage.type === "success"
+                      ? "bg-green-50 border border-green-200 text-green-700"
+                      : "bg-red-50 border border-red-200 text-red-700"
+                      }`}
                   >
                     {quotationMessage.text}
                   </div>
@@ -5098,8 +5446,8 @@ export default function AdminDashboard() {
                     {quotationLoading
                       ? "Creating..."
                       : selectedQuotation
-                      ? "Create New Quotation"
-                      : "Create Quotation"}
+                        ? "Create New Quotation"
+                        : "Create Quotation"}
                   </button>
                 </div>
               </div>
@@ -5153,16 +5501,7 @@ export default function AdminDashboard() {
                     <label className="block text-sm font-medium text-gray-700">
                       Category (Master) *
                     </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setEditingProduct(null);
-                        setActiveTab("options");
-                      }}
-                      className="text-xs text-[#7a5235] hover:underline font-medium"
-                    >
-                      + Manage in Master
-                    </button>
+
                   </div>
                   <select
                     required
@@ -5227,67 +5566,150 @@ export default function AdminDashboard() {
                       Product Images (Max 5)
                     </label>
                     <p className="text-xs text-gray-500 mt-0.5">
-                      First image is the cover. Manage existing or upload new.
+                      First image is the <strong>Cover</strong>. Drag photos to reorder which shows first, or use ◀ ▶ buttons.
                     </p>
                   </div>
                   <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-white border border-[#ded5c8] text-[#7a5235]">
-                    {editForm.existing_images.length + editForm.new_image_files.length} / 5
+                    {editForm.images.length} / 5
                   </span>
                 </div>
 
-                {/* Grid of Existing & New Images */}
-                <div className="grid grid-cols-3 sm:grid-cols-5 gap-3">
-                  {editForm.existing_images.map((imgUrl, idx) => (
-                    <div
-                      key={`existing-${idx}`}
-                      className="relative group rounded-xl overflow-hidden border border-gray-200 aspect-square bg-gray-100 shadow-2xs"
-                    >
-                      <img
-                        src={imgUrl}
-                        alt={`Existing ${idx + 1}`}
-                        className="w-full h-full object-cover"
-                      />
-                      {idx === 0 && (
-                        <span className="absolute top-1.5 left-1.5 bg-[#3d281c] text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow">
-                          Cover
-                        </span>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveExistingEditImage(idx)}
-                        className="absolute top-1.5 right-1.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-90 hover:opacity-100 shadow transition"
-                        title="Remove image"
-                      >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
+                {/* Grid of Draggable Images */}
+                <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+                  {editForm.images.map((item, idx) => {
+                    const isCover = idx === 0;
+                    const isDragging = editDragIndex === idx;
+                    const isOver = editDragOverIndex === idx;
+                    const imgSrc = item.type === "existing" ? item.url : item.preview;
 
-                  {editForm.new_image_previews.map((prevUrl, idx) => (
-                    <div
-                      key={`new-${idx}`}
-                      className="relative group rounded-xl overflow-hidden border border-emerald-300 aspect-square bg-gray-100 shadow-2xs"
-                    >
-                      <img
-                        src={prevUrl}
-                        alt={`New ${idx + 1}`}
-                        className="w-full h-full object-cover"
-                      />
-                      <span className="absolute bottom-1 left-1 bg-emerald-700 text-white text-[9px] font-bold px-1 rounded shadow">
-                        New
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => handleRemoveNewEditImage(idx)}
-                        className="absolute top-1.5 right-1.5 bg-red-600 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs opacity-90 hover:opacity-100 shadow transition"
-                        title="Remove image"
+                    return (
+                      <div
+                        key={item.id}
+                        draggable
+                        onDragStart={(e) => {
+                          setEditDragIndex(idx);
+                          e.dataTransfer.effectAllowed = "move";
+                          e.dataTransfer.setData("text/plain", `${idx}`);
+                        }}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.dataTransfer.dropEffect = "move";
+                          if (editDragOverIndex !== idx) setEditDragOverIndex(idx);
+                        }}
+                        onDragLeave={() => {
+                          if (editDragOverIndex === idx) setEditDragOverIndex(null);
+                        }}
+                        onDragEnd={() => {
+                          setEditDragIndex(null);
+                          setEditDragOverIndex(null);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          if (editDragIndex !== null && editDragIndex !== idx) {
+                            moveEditImage(editDragIndex, idx);
+                          }
+                          setEditDragIndex(null);
+                          setEditDragOverIndex(null);
+                        }}
+                        className={`relative group rounded-xl overflow-hidden aspect-square bg-gray-100 transition-all select-none cursor-grab active:cursor-grabbing ${isDragging
+                          ? "opacity-40 scale-95 ring-2 ring-dashed ring-[#7a5235]"
+                          : isOver
+                            ? "ring-2 ring-[#7a5235] scale-105 shadow-md"
+                            : "border border-gray-200 shadow-2xs hover:shadow-sm"
+                          }`}
+                        title="Drag to reorder photos"
                       >
-                        ✕
-                      </button>
-                    </div>
-                  ))}
+                        <img
+                          src={imgSrc}
+                          alt={`Photo ${idx + 1}`}
+                          className="w-full h-full object-cover pointer-events-none"
+                        />
 
-                  {editForm.existing_images.length + editForm.new_image_files.length < 5 && (
+                        {/* Top Badges */}
+                        <div className="absolute top-1.5 left-1.5 flex items-center gap-1">
+                          {isCover ? (
+                            <span className="bg-[#3d281c] text-white text-[10px] font-bold px-1.5 py-0.5 rounded shadow flex items-center gap-0.5">
+                              <span>★</span>
+                              <span>Cover</span>
+                            </span>
+                          ) : (
+                            <span className="bg-black/60 backdrop-blur-xs text-white text-[9px] font-semibold px-1.5 py-0.5 rounded shadow">
+                              #{idx + 1}
+                            </span>
+                          )}
+                          {item.type === "new" && (
+                            <span className="bg-emerald-700 text-white text-[9px] font-bold px-1 rounded shadow">
+                              New
+                            </span>
+                          )}
+                        </div>
+
+                        {/* Bottom Action Controls */}
+                        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1 sm:p-1.5 flex items-center justify-between opacity-90 group-hover:opacity-100 transition">
+                          <div className="flex items-center gap-1">
+                            {idx > 0 && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveEditImage(idx, idx - 1);
+                                }}
+                                className="w-5 h-5 rounded bg-white/90 hover:bg-white text-gray-800 text-[10px] font-bold flex items-center justify-center shadow transition active:scale-90"
+                                title="Move left"
+                              >
+                                ◀
+                              </button>
+                            )}
+                            {idx < editForm.images.length - 1 && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveEditImage(idx, idx + 1);
+                                }}
+                                className="w-5 h-5 rounded bg-white/90 hover:bg-white text-gray-800 text-[10px] font-bold flex items-center justify-center shadow transition active:scale-90"
+                                title="Move right"
+                              >
+                                ▶
+                              </button>
+                            )}
+                            {!isCover && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  moveEditImage(idx, 0);
+                                }}
+                                className="px-1.5 py-0.5 rounded bg-white/90 hover:bg-white text-[#7a5235] text-[9px] font-bold shadow transition active:scale-90"
+                                title="Set as primary cover photo"
+                              >
+                                Set Cover
+                              </button>
+                            )}
+                          </div>
+
+                          <span className="text-[10px] text-white/80 font-mono tracking-tighter cursor-grab">
+                            ⠿
+                          </span>
+                        </div>
+
+                        {/* Delete Button */}
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleRemoveEditImage(idx);
+                          }}
+                          className="absolute top-1.5 right-1.5 bg-red-600 hover:bg-red-700 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow transition active:scale-90"
+                          title="Remove photo"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    );
+                  })}
+
+                  {editForm.images.length < 5 && (
                     <label className="flex flex-col items-center justify-center border-2 border-dashed border-[#cfc3b3] rounded-xl bg-white hover:bg-[#fbf9f6] cursor-pointer aspect-square transition text-center p-2">
                       <span className="text-xl">📸</span>
                       <span className="text-[10px] font-semibold text-[#5a3927] mt-1">
@@ -5395,13 +5817,12 @@ export default function AdminDashboard() {
                     return (
                       <div
                         key={stage}
-                        className={`rounded-xl p-2.5 text-center transition border ${
-                          isCurrent
-                            ? "bg-[#3d281c] text-white border-[#3d281c] shadow-sm font-semibold"
-                            : isPassed
+                        className={`rounded-xl p-2.5 text-center transition border ${isCurrent
+                          ? "bg-[#3d281c] text-white border-[#3d281c] shadow-sm font-semibold"
+                          : isPassed
                             ? "bg-emerald-50 text-emerald-800 border-emerald-200"
                             : "bg-white text-gray-400 border-gray-200"
-                        }`}
+                          }`}
                       >
                         <div className="text-[10px] font-bold uppercase tracking-wider mb-0.5">
                           {isCurrent ? "★ CURRENT" : isPassed ? "✓ DONE" : `STEP ${idx + 1}`}
@@ -5430,11 +5851,10 @@ export default function AdminDashboard() {
                           onClick={() =>
                             handleUpdateOrderStatus(selectedOrderDetails.id, stage)
                           }
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${
-                            isCurrent
-                              ? "bg-[#7a5235] text-white font-semibold ring-2 ring-[#7a5235]/40"
-                              : "bg-white border border-[#ded5c8] text-gray-700 hover:bg-[#f5efe6]"
-                          }`}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition flex items-center gap-1.5 ${isCurrent
+                            ? "bg-[#7a5235] text-white font-semibold ring-2 ring-[#7a5235]/40"
+                            : "bg-white border border-[#ded5c8] text-gray-700 hover:bg-[#f5efe6]"
+                            }`}
                         >
                           <span
                             className={`h-2 w-2 rounded-full ${getOrderStatusDot(
@@ -5670,11 +6090,10 @@ export default function AdminDashboard() {
             <div className="border-b border-[#ded5c8] bg-white px-6 py-5 flex items-center justify-between shrink-0">
               <div className="flex items-center gap-3.5">
                 <div
-                  className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-base shadow-xs shrink-0 ${
-                    selectedUserDetails.is_admin
-                      ? "bg-amber-100 text-amber-900 border border-amber-300"
-                      : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
-                  }`}
+                  className={`w-12 h-12 rounded-2xl flex items-center justify-center font-bold text-base shadow-xs shrink-0 ${selectedUserDetails.is_admin
+                    ? "bg-amber-100 text-amber-900 border border-amber-300"
+                    : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
+                    }`}
                 >
                   {(selectedUserDetails.full_name || selectedUserDetails.email || "U")
                     .split(" ")
@@ -5750,10 +6169,10 @@ export default function AdminDashboard() {
                     <span className="font-semibold text-gray-800 mt-0.5 block">
                       {selectedUserDetails.created_at
                         ? new Date(selectedUserDetails.created_at).toLocaleDateString("en-IN", {
-                            day: "numeric",
-                            month: "short",
-                            year: "numeric",
-                          })
+                          day: "numeric",
+                          month: "short",
+                          year: "numeric",
+                        })
                         : "-"}
                     </span>
                   </div>
@@ -5924,11 +6343,10 @@ export default function AdminDashboard() {
                     handleToggleAdminRole(selectedUserDetails);
                     setSelectedUserDetails(null);
                   }}
-                  className={`px-4 py-2 rounded-xl text-xs font-semibold transition ${
-                    selectedUserDetails.is_admin
-                      ? "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
-                      : "bg-[#3d281c] text-white hover:bg-[#5a3927]"
-                  }`}
+                  className={`px-4 py-2 rounded-xl text-xs font-semibold transition ${selectedUserDetails.is_admin
+                    ? "bg-amber-50 text-amber-800 border border-amber-200 hover:bg-amber-100"
+                    : "bg-[#3d281c] text-white hover:bg-[#5a3927]"
+                    }`}
                 >
                   {selectedUserDetails.is_admin ? "Demote to Customer" : "👑 Grant Administrator Privileges"}
                 </button>
@@ -5937,11 +6355,10 @@ export default function AdminDashboard() {
                   type="button"
                   onClick={() => handleDeleteUser(selectedUserDetails)}
                   disabled={selectedUserDetails.id === currentUserId}
-                  className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${
-                    selectedUserDetails.id === currentUserId
-                      ? "opacity-30 cursor-not-allowed text-gray-400"
-                      : "text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200"
-                  }`}
+                  className={`px-3 py-2 rounded-xl text-xs font-semibold transition ${selectedUserDetails.id === currentUserId
+                    ? "opacity-30 cursor-not-allowed text-gray-400"
+                    : "text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200"
+                    }`}
                 >
                   Delete User
                 </button>
@@ -6161,11 +6578,10 @@ export default function AdminDashboard() {
                 </label>
                 <div className="grid grid-cols-2 gap-3">
                   <label
-                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${
-                      !createUserForm.is_admin
-                        ? "border-[#3d281c] bg-[#faf7f2] ring-1 ring-[#3d281c]"
-                        : "border-gray-200 bg-white hover:bg-gray-50"
-                    }`}
+                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${!createUserForm.is_admin
+                      ? "border-[#3d281c] bg-[#faf7f2] ring-1 ring-[#3d281c]"
+                      : "border-gray-200 bg-white hover:bg-gray-50"
+                      }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-semibold text-xs text-gray-900 flex items-center gap-1.5">
@@ -6188,11 +6604,10 @@ export default function AdminDashboard() {
                   </label>
 
                   <label
-                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${
-                      createUserForm.is_admin
-                        ? "border-amber-600 bg-amber-50/70 ring-1 ring-amber-600"
-                        : "border-gray-200 bg-white hover:bg-gray-50"
-                    }`}
+                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${createUserForm.is_admin
+                      ? "border-amber-600 bg-amber-50/70 ring-1 ring-amber-600"
+                      : "border-gray-200 bg-white hover:bg-gray-50"
+                      }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-semibold text-xs text-amber-900 flex items-center gap-1.5">
@@ -6251,11 +6666,10 @@ export default function AdminDashboard() {
             <div className="border-b border-[#ded5c8] px-6 py-4 flex items-center justify-between bg-[#faf7f2]">
               <div className="flex items-center gap-3">
                 <div
-                  className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${
-                    editingUser.is_admin
-                      ? "bg-amber-100 text-amber-900 border border-amber-300"
-                      : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
-                  }`}
+                  className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs shrink-0 ${editingUser.is_admin
+                    ? "bg-amber-100 text-amber-900 border border-amber-300"
+                    : "bg-[#f5efe6] text-[#7a5235] border border-[#e7dccd]"
+                    }`}
                 >
                   {(editingUser.full_name || editingUser.email || "U")
                     .split(" ")
@@ -6349,11 +6763,10 @@ export default function AdminDashboard() {
                 </label>
                 <div className="grid grid-cols-2 gap-3">
                   <label
-                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${
-                      !editUserForm.is_admin
-                        ? "border-[#3d281c] bg-[#faf7f2] ring-1 ring-[#3d281c]"
-                        : "border-gray-200 bg-white hover:bg-gray-50"
-                    }`}
+                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${!editUserForm.is_admin
+                      ? "border-[#3d281c] bg-[#faf7f2] ring-1 ring-[#3d281c]"
+                      : "border-gray-200 bg-white hover:bg-gray-50"
+                      }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-semibold text-xs text-gray-900 flex items-center gap-1">
@@ -6374,11 +6787,10 @@ export default function AdminDashboard() {
                   </label>
 
                   <label
-                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${
-                      editUserForm.is_admin
-                        ? "border-amber-600 bg-amber-50/70 ring-1 ring-amber-600"
-                        : "border-gray-200 bg-white hover:bg-gray-50"
-                    }`}
+                    className={`cursor-pointer rounded-xl border p-3 flex flex-col transition ${editUserForm.is_admin
+                      ? "border-amber-600 bg-amber-50/70 ring-1 ring-amber-600"
+                      : "border-gray-200 bg-white hover:bg-gray-50"
+                      }`}
                   >
                     <div className="flex items-center justify-between mb-1">
                       <span className="font-semibold text-xs text-amber-900 flex items-center gap-1">
@@ -6484,10 +6896,26 @@ export default function AdminDashboard() {
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShareProduct(previewProduct.product as any)}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white/90 hover:text-white px-3 py-1 text-xs font-medium transition cursor-pointer"
+                  title="Share this product"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
+                  <span>Share</span>
+                </button>
+
                 {(() => {
                   const currentModalImg =
                     extractProductImages(previewProduct.product)[
-                      previewProduct.activeIndex
+                    previewProduct.activeIndex
                     ] || previewProduct.product.image_url;
                   return currentModalImg ? (
                     <a
@@ -6521,7 +6949,7 @@ export default function AdminDashboard() {
               {(() => {
                 const currentModalImg =
                   extractProductImages(previewProduct.product)[
-                    previewProduct.activeIndex
+                  previewProduct.activeIndex
                   ] || previewProduct.product.image_url;
 
                 if (!currentModalImg) {
@@ -6558,11 +6986,11 @@ export default function AdminDashboard() {
                       setPreviewProduct((prev) =>
                         prev
                           ? {
-                              ...prev,
-                              activeIndex:
-                                (prev.activeIndex - 1 + imgs.length) %
-                                imgs.length,
-                            }
+                            ...prev,
+                            activeIndex:
+                              (prev.activeIndex - 1 + imgs.length) %
+                              imgs.length,
+                          }
                           : null
                       );
                     }}
@@ -6579,10 +7007,10 @@ export default function AdminDashboard() {
                       setPreviewProduct((prev) =>
                         prev
                           ? {
-                              ...prev,
-                              activeIndex:
-                                (prev.activeIndex + 1) % imgs.length,
-                            }
+                            ...prev,
+                            activeIndex:
+                              (prev.activeIndex + 1) % imgs.length,
+                          }
                           : null
                       );
                     }}
@@ -6610,11 +7038,10 @@ export default function AdminDashboard() {
                             prev ? { ...prev, activeIndex: idx } : null
                           )
                         }
-                        className={`relative h-14 w-20 sm:h-16 sm:w-24 shrink-0 overflow-hidden rounded-lg border-2 bg-black/50 transition-all duration-200 ${
-                          isCurrent
-                            ? "border-[#d8bd91] ring-2 ring-[#d8bd91]/50 scale-105"
-                            : "border-white/20 opacity-60 hover:opacity-100"
-                        }`}
+                        className={`relative h-14 w-20 sm:h-16 sm:w-24 shrink-0 overflow-hidden rounded-lg border-2 bg-black/50 transition-all duration-200 ${isCurrent
+                          ? "border-[#d8bd91] ring-2 ring-[#d8bd91]/50 scale-105"
+                          : "border-white/20 opacity-60 hover:opacity-100"
+                          }`}
                       >
                         <img
                           src={imgUrl}
@@ -6650,6 +7077,22 @@ export default function AdminDashboard() {
               </div>
 
               <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShareProduct(previewProduct.product as any)}
+                  className="rounded-xl border border-white/20 bg-white/10 hover:bg-white/20 px-3.5 py-2 text-xs font-semibold text-white/90 hover:text-white transition flex items-center gap-1.5 cursor-pointer"
+                  title="Share this product"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
+                  <span>Share</span>
+                </button>
+
                 <button
                   type="button"
                   onClick={() => {
@@ -6688,6 +7131,13 @@ export default function AdminDashboard() {
           </div>
         </div>
       )}
+
+      {/* Product Share Modal */}
+      <ProductShareModal
+        product={shareProduct}
+        isOpen={Boolean(shareProduct)}
+        onClose={() => setShareProduct(null)}
+      />
     </main>
   );
 }

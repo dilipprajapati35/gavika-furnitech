@@ -1,33 +1,14 @@
 "use client";
 
 import ProductCard from "@/components/ProductCard";
+
+import ProductShareModal, { ShareableProduct } from "@/components/ProductShareModal";
 import { locationData } from "@/data/locations";
 import { extractProductImages, formatPrice } from "@/utils/product-images";
 import { supabase } from "@/utils/supabase/client";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-const categories = [
-  {
-    name: "Living Room",
-    description: "Sofas, coffee tables & TV units",
-    icon: "🛋️",
-  },
-  {
-    name: "Bedroom",
-    description: "Beds, wardrobes & side tables",
-    icon: "🛏️",
-  },
-  {
-    name: "Dining",
-    description: "Dining tables & complete sets",
-    icon: "🍽️",
-  },
-  {
-    name: "Office",
-    description: "Desks, chairs & storage",
-    icon: "💼",
-  },
-];
 
 type DbProduct = {
   id: string;
@@ -55,11 +36,31 @@ export default function Home() {
   const touchCardStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const touchModalStartRef = useRef<{ x: number; y: number } | null>(null);
 
-  // Gallery Modal
+  // Gallery Modal & Share State
   const [galleryProduct, setGalleryProduct] = useState<{
     product: DbProduct;
     activeIndex: number;
   } | null>(null);
+  const [shareProduct, setShareProduct] = useState<ShareableProduct | null>(null);
+
+  const openProductGallery = useCallback((product: DbProduct, activeIndex: number = 0) => {
+    setGalleryProduct({ product, activeIndex });
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("product", product.id);
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
+
+  const closeProductGallery = useCallback(() => {
+    setGalleryProduct(null);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("product");
+      url.searchParams.delete("view");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
 
   // Razorpay Checkout State
   const [checkoutProduct, setCheckoutProduct] = useState<DbProduct | null>(null);
@@ -557,12 +558,35 @@ export default function Home() {
     }
   }, [featuredProducts, sessionUser]);
 
+  // Deep-linking: auto-open product modal when URL has ?product=<id> or ?view=<id>
+  useEffect(() => {
+    if (typeof window === "undefined" || !featuredProducts.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const targetId = params.get("product") || params.get("view");
+    if (!targetId) return;
+
+    const targetProduct = featuredProducts.find(
+      (p) => p.id === targetId || p.id.toLowerCase().startsWith(targetId.toLowerCase())
+    );
+    if (targetProduct) {
+      openProductGallery(targetProduct, 0);
+      setTimeout(() => {
+        const el = document.getElementById(`product-${targetProduct.id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 350);
+    } else {
+      router.push(`/furniture?product=${encodeURIComponent(targetId)}`);
+    }
+  }, [featuredProducts, openProductGallery, router]);
+
   return (
     <main className="min-h-screen bg-[#f8f5ef] text-[#29251f]">
 
       {/* NAVBAR */}
       <header className="sticky top-0 z-50 border-b border-[#ded5c8] bg-[#f8f5ef]/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 sm:py-5">
 
           <a href="/" className="flex items-center gap-3">
             <img
@@ -666,6 +690,7 @@ export default function Home() {
             {mobileMenuOpen ? "✕" : "☰"}
           </button>
         </div>
+
         {mobileMenuOpen && (
           <div className="md:hidden border-t border-[#ded5c8] bg-[#f8f5ef] px-6 py-4">
             <nav className="flex flex-col gap-4 text-sm font-medium">
@@ -770,7 +795,7 @@ export default function Home() {
 
       {/* HERO */}
       <section id="home" className="overflow-hidden">
-        <div className="mx-auto grid max-w-7xl items-center gap-12 px-6 py-20 lg:grid-cols-2 lg:px-8 lg:py-28">
+        <div className="mx-auto grid max-w-7xl items-center gap-12 px-6 pt-6 pb-16 sm:pt-8 sm:pb-20 lg:grid-cols-2 lg:px-8 lg:pt-10 lg:pb-24">
 
           <div>
             <p className="mb-5 text-sm font-semibold uppercase tracking-[0.25em] text-[#8b5e3c]">
@@ -798,8 +823,7 @@ export default function Home() {
               </a>
 
               <a
-                href="#custom"
-                className="rounded-full border border-[#29251f] px-7 py-3.5 text-sm font-semibold transition hover:bg-[#29251f] hover:text-white"
+                href="/custom-furniture" className="rounded-full border border-[#29251f] px-7 py-3.5 text-sm font-semibold transition hover:bg-[#29251f] hover:text-white"
               >
                 Create Custom Furniture
               </a>
@@ -843,56 +867,6 @@ export default function Home() {
         </div>
       </section>
 
-      {/* CATEGORIES */}
-      <section
-        id="furniture"
-        className="border-y border-[#ded5c8] bg-[#efe8dc]"
-      >
-        <div className="mx-auto max-w-7xl px-6 py-20 lg:px-8">
-
-          <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end">
-            <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.2em] text-[#8b5e3c]">
-                Explore
-              </p>
-
-              <h2 className="mt-3 text-4xl font-semibold tracking-tight">
-                Furniture for every room
-              </h2>
-            </div>
-
-            <p className="max-w-md text-[#625b52]">
-              Choose from our designs or tell us exactly what you have in
-              mind. We can build it around your space.
-            </p>
-          </div>
-
-          <div className="mt-12 grid gap-5 sm:grid-cols-2 lg:grid-cols-4">
-            {categories.map((category) => (
-              <div
-                key={category.name}
-                className="group rounded-3xl border border-[#d3c8b9] bg-[#f8f5ef] p-7 transition duration-300 hover:-translate-y-1 hover:shadow-xl"
-              >
-                <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-[#e5d8c7] text-2xl">
-                  {category.icon}
-                </div>
-
-                <h3 className="mt-7 text-xl font-semibold">
-                  {category.name}
-                </h3>
-
-                <p className="mt-2 text-sm leading-6 text-[#746c62]">
-                  {category.description}
-                </p>
-
-                <button className="mt-6 text-sm font-semibold text-[#8b5e3c]">
-                  Explore →
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
-      </section>
 
       {/* FEATURED DESIGNS */}
       <section className="mx-auto max-w-7xl px-6 py-20 lg:px-8">
@@ -924,9 +898,10 @@ export default function Home() {
                 key={product.id || product.name}
                 product={product}
                 onView={(activeIndex) =>
-                  setGalleryProduct({ product, activeIndex })
+                  openProductGallery(product, activeIndex)
                 }
                 onBuyNow={() => handleBuyNow(product)}
+                onShare={(p) => setShareProduct(p as any)}
               />
             ))}
           </div>
@@ -967,12 +942,11 @@ export default function Home() {
                 quotation and design for you.
               </p>
 
-              <a
-                href="#contact"
-                className="mt-9 inline-flex rounded-full bg-white px-7 py-3.5 text-sm font-semibold text-[#29251f] transition hover:bg-[#d5ad84]"
+              <Link
+                href="/custom-furniture" className="mt-9 inline-flex rounded-full bg-white px-7 py-3.5 text-sm font-semibold text-[#29251f] transition hover:bg-[#d5ad84]"
               >
                 Submit Custom Request →
-              </a>
+              </Link>
             </div>
 
             <div className="rounded-[2rem] border border-white/10 bg-white/5 p-8">
@@ -1192,7 +1166,7 @@ export default function Home() {
       {galleryProduct && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-md p-2 sm:p-4 md:p-6"
-          onClick={() => setGalleryProduct(null)}
+          onClick={closeProductGallery}
         >
           <div
             className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl overflow-hidden rounded-2xl sm:rounded-3xl bg-[#1c1917] text-white shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[95vh] border border-white/10"
@@ -1216,6 +1190,23 @@ export default function Home() {
               </div>
 
               <div className="flex items-center gap-2">
+                {/* Share Button */}
+                <button
+                  type="button"
+                  onClick={() => setShareProduct(galleryProduct.product as any)}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white/90 hover:text-white px-3 py-1 text-xs font-medium transition cursor-pointer"
+                  title="Share this design"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
+                  <span>Share</span>
+                </button>
+
                 <a
                   href={
                     galleryProduct.product.images?.[galleryProduct.activeIndex] ||
@@ -1236,7 +1227,7 @@ export default function Home() {
 
                 <button
                   type="button"
-                  onClick={() => setGalleryProduct(null)}
+                  onClick={closeProductGallery}
                   className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 active:bg-white/30 hover:text-white transition"
                   aria-label="Close modal"
                 >
@@ -1317,8 +1308,8 @@ export default function Home() {
                           )
                         }
                         className={`relative h-14 w-20 sm:h-16 sm:w-24 flex-shrink-0 snap-center overflow-hidden rounded-lg border-2 bg-black/50 transition-all duration-200 ${isCurrent
-                            ? "border-[#d8bd91] ring-2 ring-[#d8bd91]/50 scale-105"
-                            : "border-white/20 opacity-60 hover:opacity-100"
+                          ? "border-[#d8bd91] ring-2 ring-[#d8bd91]/50 scale-105"
+                          : "border-white/20 opacity-60 hover:opacity-100"
                           }`}
                       >
                         <img
@@ -1357,7 +1348,22 @@ export default function Home() {
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <button
                   type="button"
-                  onClick={() => setGalleryProduct(null)}
+                  onClick={() => setShareProduct(galleryProduct.product as any)}
+                  className="flex-1 sm:flex-initial text-center rounded-xl border border-white/20 px-3.5 py-2 sm:py-1.5 text-xs font-semibold text-white/90 hover:text-white active:bg-white/20 hover:bg-white/10 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  title="Share this design"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
+                  <span>Share</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={closeProductGallery}
                   className="flex-1 sm:flex-initial text-center rounded-xl border border-white/20 px-4 py-2 sm:py-1.5 text-xs font-semibold text-white/80 active:bg-white/20 hover:bg-white/10 transition"
                 >
                   Close
@@ -1372,7 +1378,7 @@ export default function Home() {
                   type="button"
                   onClick={() => {
                     const prod = galleryProduct.product;
-                    setGalleryProduct(null);
+                    closeProductGallery();
                     handleBuyNow(prod);
                   }}
                   className="flex-1 sm:flex-initial text-center rounded-xl bg-white hover:bg-[#f5efe6] text-[#29251f] px-5 py-2 sm:py-1.5 text-xs font-semibold shadow-sm transition flex items-center justify-center gap-1.5"
@@ -1477,8 +1483,8 @@ export default function Home() {
                     }}
                     placeholder="e.g. Rahul Sharma"
                     className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.name
-                        ? "border-red-500 bg-red-50/20"
-                        : "border-gray-300 focus:border-[#8b6f47]"
+                      ? "border-red-500 bg-red-50/20"
+                      : "border-gray-300 focus:border-[#8b6f47]"
                       }`}
                   />
                   {checkoutErrors.name && (
@@ -1518,8 +1524,8 @@ export default function Home() {
                       }}
                       placeholder="9876543210"
                       className={`w-full rounded-xl border pl-12 pr-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.mobile
-                          ? "border-red-500 bg-red-50/20"
-                          : "border-gray-300 focus:border-[#8b6f47]"
+                        ? "border-red-500 bg-red-50/20"
+                        : "border-gray-300 focus:border-[#8b6f47]"
                         }`}
                     />
                   </div>
@@ -1545,8 +1551,8 @@ export default function Home() {
                     }}
                     placeholder="rahul@example.com"
                     className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.email
-                        ? "border-red-500 bg-red-50/20"
-                        : "border-gray-300 focus:border-[#8b6f47]"
+                      ? "border-red-500 bg-red-50/20"
+                      : "border-gray-300 focus:border-[#8b6f47]"
                       }`}
                   />
                   {checkoutErrors.email && (
@@ -1571,8 +1577,8 @@ export default function Home() {
                     }}
                     placeholder="Flat / House No., Building Name, Street, Landmark"
                     className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.address
-                        ? "border-red-500 bg-red-50/20"
-                        : "border-gray-300 focus:border-[#8b6f47]"
+                      ? "border-red-500 bg-red-50/20"
+                      : "border-gray-300 focus:border-[#8b6f47]"
                       }`}
                   />
                   {checkoutErrors.address && (
@@ -1602,8 +1608,8 @@ export default function Home() {
                     }}
                     required
                     className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition cursor-pointer ${checkoutErrors.country
-                        ? "border-red-500 bg-red-50/20"
-                        : "border-gray-300 focus:border-[#8b6f47]"
+                      ? "border-red-500 bg-red-50/20"
+                      : "border-gray-300 focus:border-[#8b6f47]"
                       }`}
                   >
                     <option value="">Select Country</option>
@@ -1640,8 +1646,8 @@ export default function Home() {
                     disabled={!checkoutCustomer.country}
                     required
                     className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed ${checkoutErrors.state
-                        ? "border-red-500 bg-red-50/20"
-                        : "border-gray-300 focus:border-[#8b6f47]"
+                      ? "border-red-500 bg-red-50/20"
+                      : "border-gray-300 focus:border-[#8b6f47]"
                       }`}
                   >
                     <option value="">Select State</option>
@@ -1677,8 +1683,8 @@ export default function Home() {
                     disabled={!checkoutCustomer.state}
                     required
                     className={`w-full rounded-xl border bg-white px-3.5 py-2.5 text-sm outline-none transition cursor-pointer disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed ${checkoutErrors.city
-                        ? "border-red-500 bg-red-50/20"
-                        : "border-gray-300 focus:border-[#8b6f47]"
+                      ? "border-red-500 bg-red-50/20"
+                      : "border-gray-300 focus:border-[#8b6f47]"
                       }`}
                   >
                     <option value="">Select City</option>
@@ -1716,8 +1722,8 @@ export default function Home() {
                     }}
                     placeholder="e.g. 313001"
                     className={`w-full rounded-xl border px-3.5 py-2.5 text-sm outline-none transition ${checkoutErrors.pincode
-                        ? "border-red-500 bg-red-50/20"
-                        : "border-gray-300 focus:border-[#8b6f47]"
+                      ? "border-red-500 bg-red-50/20"
+                      : "border-gray-300 focus:border-[#8b6f47]"
                       }`}
                   />
                   {checkoutErrors.pincode && (
@@ -1898,6 +1904,12 @@ export default function Home() {
         </div>
       )}
 
+      {/* Product Share Modal */}
+      <ProductShareModal
+        product={shareProduct}
+        isOpen={Boolean(shareProduct)}
+        onClose={() => setShareProduct(null)}
+      />
     </main>
   );
 }

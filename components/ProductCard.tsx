@@ -18,12 +18,14 @@ interface ProductCardProps {
   product: ProductCardItem;
   onView: (index: number) => void;
   onBuyNow: () => void;
+  onShare?: (product: ProductCardItem) => void;
 }
 
 export default function ProductCard({
   product,
   onView,
   onBuyNow,
+  onShare,
 }: ProductCardProps) {
   const allImages = extractProductImages(product);
   const [activeImageIndex, setActiveImageIndex] = useState(0);
@@ -49,7 +51,10 @@ export default function ProductCard({
   const priceData = formatPrice(product.price);
 
   return (
-    <article className="group rounded-2xl bg-white border border-[#e7dccd] hover:border-[#b8956e] overflow-hidden shadow-xs hover:shadow-lg transition-all duration-300 flex flex-col justify-between">
+    <article
+      id={`product-${product.id}`}
+      className="group rounded-2xl bg-white border border-[#e7dccd] hover:border-[#b8956e] overflow-hidden shadow-xs hover:shadow-lg transition-all duration-300 flex flex-col justify-between"
+    >
       <div>
         {/* Image Display with Click to View Modal */}
         <div
@@ -106,10 +111,32 @@ export default function ProductCard({
 
           {/* Photo Count Pill */}
           {displayImages.length > 1 && (
-            <span className="absolute top-3 right-3 rounded-full bg-black/75 backdrop-blur-md text-white px-2.5 py-1 text-[11px] font-medium flex items-center gap-1.5 shadow-md pointer-events-none z-10">
+            <span className="absolute top-3 right-12 rounded-full bg-black/75 backdrop-blur-md text-white px-2.5 py-1 text-[11px] font-medium flex items-center gap-1.5 shadow-md pointer-events-none z-10">
               <span>📷</span>
-              <span>{displayImages.length} photos</span>
+              <span>{displayImages.length}</span>
             </span>
+          )}
+
+          {/* Share Button (Top Right) */}
+          {onShare && (
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                onShare(product);
+              }}
+              className="absolute top-3 right-3 z-20 h-8 w-8 rounded-full bg-white/95 hover:bg-white text-[#3d281c] hover:text-[#8b5e3c] flex items-center justify-center shadow-md backdrop-blur-xs transition duration-150 active:scale-95 cursor-pointer border border-stone-200/50"
+              title="Share this product"
+              aria-label="Share product"
+            >
+              <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="18" cy="5" r="3" />
+                <circle cx="6" cy="12" r="3" />
+                <circle cx="18" cy="19" r="3" />
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+              </svg>
+            </button>
           )}
 
           {/* Hover to view overlay */}
@@ -225,6 +252,24 @@ export default function ProductCard({
           <span>🔍</span>
           <span>View</span>
         </button>
+
+        {onShare && (
+          <button
+            type="button"
+            onClick={() => onShare(product)}
+            className="inline-flex items-center justify-center p-2 rounded-xl text-xs font-semibold text-[#5a3927] bg-white hover:bg-[#f5efe6] border border-[#d8c7b3] transition duration-150 active:scale-98 shadow-2xs cursor-pointer"
+            title="Share this design (WhatsApp / Copy link)"
+            aria-label="Share"
+          >
+            <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="18" cy="5" r="3" />
+              <circle cx="6" cy="12" r="3" />
+              <circle cx="18" cy="19" r="3" />
+              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+            </svg>
+          </button>
+        )}
 
         <a
           href={`/custom-furniture?design=${encodeURIComponent(product.id)}`}
