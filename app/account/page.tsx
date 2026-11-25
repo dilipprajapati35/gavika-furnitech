@@ -1,5 +1,6 @@
 "use client";
 
+import { STORE_CATEGORIES } from "@/utils/categories";
 import { supabase } from "@/utils/supabase/client";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -2735,18 +2736,18 @@ function OrderTrackingCard({
                   <div
                     key={step}
                     className={`p-2.5 rounded-xl border flex items-center gap-2 transition ${active
-                        ? "bg-[#3d281c] text-white border-[#3d281c] font-semibold shadow-2xs"
-                        : completed
-                          ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-medium"
-                          : "bg-white text-gray-400 border-gray-200"
+                      ? "bg-[#3d281c] text-white border-[#3d281c] font-semibold shadow-2xs"
+                      : completed
+                        ? "bg-emerald-50 text-emerald-800 border-emerald-200 font-medium"
+                        : "bg-white text-gray-400 border-gray-200"
                       }`}
                   >
                     <div
                       className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${active
-                          ? "bg-white text-[#3d281c]"
-                          : completed
-                            ? "bg-emerald-600 text-white"
-                            : "bg-gray-100 text-gray-400"
+                        ? "bg-white text-[#3d281c]"
+                        : completed
+                          ? "bg-emerald-600 text-white"
+                          : "bg-gray-100 text-gray-400"
                         }`}
                     >
                       {completed && !active ? "✓" : index + 1}

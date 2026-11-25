@@ -1,11 +1,15 @@
 "use client";
 
 import { extractProductImages, formatPrice } from "@/utils/product-images";
+import { getCategoryIcon, getCategoryOrderIndex, STORE_CATEGORIES } from "@/utils/categories";
 import { locationData } from "@/data/locations";
 import { supabase } from "@/utils/supabase/client";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import ProductCard from "@/components/ProductCard";
+import ProductShareModal, { ShareableProduct } from "@/components/ProductShareModal";
+
 
 type Product = {
   id: string;
@@ -33,6 +37,26 @@ export default function FurniturePage() {
     product: Product;
     activeIndex: number;
   } | null>(null);
+  const [shareProduct, setShareProduct] = useState<ShareableProduct | null>(null);
+
+  const openProductGallery = useCallback((product: Product, activeIndex: number = 0) => {
+    setGalleryProduct({ product, activeIndex });
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.set("product", product.id);
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
+
+  const closeProductGallery = useCallback(() => {
+    setGalleryProduct(null);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      url.searchParams.delete("product");
+      url.searchParams.delete("view");
+      window.history.replaceState({}, "", url.toString());
+    }
+  }, []);
 
   const touchCardStartRef = useRef<{ id: string; x: number; y: number } | null>(null);
   const touchModalStartRef = useRef<{ x: number; y: number } | null>(null);
@@ -489,6 +513,12 @@ export default function FurniturePage() {
           const typeNames = typesRes.data
             .map((item: { name: string }) => item.name)
             .filter(Boolean);
+          typeNames.sort((a: string, b: string) => {
+            const orderA = getCategoryOrderIndex(a);
+            const orderB = getCategoryOrderIndex(b);
+            if (orderA !== orderB) return orderA - orderB;
+            return a.localeCompare(b);
+          });
           setCategories(["All", ...typeNames]);
         }
       } catch (err) {
@@ -500,6 +530,32 @@ export default function FurniturePage() {
 
     loadData();
   }, []);
+
+  // Auto-select category if arriving with ?category=<categoryName>
+  useEffect(() => {
+    if (typeof window === "undefined" || categories.length <= 1) return;
+    const params = new URLSearchParams(window.location.search);
+    const catParam = params.get("category");
+    if (!catParam) return;
+
+    const raw = catParam.trim().toLowerCase();
+    const matched = categories.find((c) => {
+      const cLow = c.trim().toLowerCase();
+      return (
+        cLow === raw ||
+        cLow.includes(raw) ||
+        raw.includes(cLow) ||
+        (raw.includes("bed") && cLow.includes("bed")) ||
+        (raw.includes("dining") && cLow.includes("dining")) ||
+        (raw.includes("living") && (cLow.includes("sofa") || cLow.includes("tv"))) ||
+        (raw.includes("office") && (cLow.includes("office") || cLow.includes("study")))
+      );
+    });
+
+    if (matched && matched !== "All") {
+      setSelectedCategory(matched);
+    }
+  }, [categories]);
 
   // Auto-open checkout modal if returning from login with ?buy=<productId>
   useEffect(() => {
@@ -515,20 +571,68 @@ export default function FurniturePage() {
     }
   }, [productsList, sessionUser]);
 
-  const filteredProducts =
-    selectedCategory === "All"
-      ? productsList
-      : productsList.filter(
-        (product) =>
-          product.category?.trim().toLowerCase() ===
-          selectedCategory.trim().toLowerCase()
-      );
+  // Deep-linking: auto-open product modal when URL has ?product=<id> or ?view=<id>
+  useEffect(() => {
+    if (typeof window === "undefined" || !productsList.length) return;
+    const params = new URLSearchParams(window.location.search);
+    const targetId = params.get("product") || params.get("view");
+    if (!targetId) return;
+
+    const targetProduct = productsList.find(
+      (p) => p.id === targetId || p.id.toLowerCase().startsWith(targetId.toLowerCase())
+    );
+    if (targetProduct) {
+      setGalleryProduct({ product: targetProduct, activeIndex: 0 });
+      setTimeout(() => {
+        const el = document.getElementById(`product-${targetProduct.id}`);
+        if (el) {
+          el.scrollIntoView({ behavior: "smooth", block: "center" });
+        }
+      }, 350);
+    }
+  }, [productsList]);
+
+  // Group products strictly category-by-category so "All" is not mixed up
+  const groupedCategories = useMemo(() => {
+    const map = new Map<string, Product[]>();
+    for (const product of productsList) {
+      const cat = product.category?.trim() || "Other";
+      if (!map.has(cat)) {
+        map.set(cat, []);
+      }
+      map.get(cat)!.push(product);
+    }
+
+    return Array.from(map.entries())
+      .map(([categoryName, products]) => ({
+        categoryName,
+        products,
+      }))
+      .sort((a, b) => {
+        const orderA = getCategoryOrderIndex(a.categoryName);
+        const orderB = getCategoryOrderIndex(b.categoryName);
+        if (orderA !== orderB) return orderA - orderB;
+        return a.categoryName.localeCompare(b.categoryName);
+      });
+  }, [productsList]);
+
+  // Filtered products list (arranged category-by-category when "All" is selected)
+  const filteredProducts = useMemo(() => {
+    if (selectedCategory === "All") {
+      return groupedCategories.flatMap((g) => g.products);
+    }
+    return productsList.filter(
+      (product) =>
+        product.category?.trim().toLowerCase() ===
+        selectedCategory.trim().toLowerCase()
+    );
+  }, [selectedCategory, productsList, groupedCategories]);
 
   return (
     <main className="min-h-screen bg-[#f8f5ef] text-[#29251f]">
       {/* Header */}
       <header className="sticky top-0 z-50 border-b border-[#ded5c8] bg-[#f8f5ef]/95 backdrop-blur">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-5">
+        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4 sm:py-5">
           <a href="/" className="flex items-center gap-3">
             <img
               src="/Gavika-new-logo.png"
@@ -682,7 +786,7 @@ export default function FurniturePage() {
       </header>
 
       {/* Hero */}
-      <section className="mx-auto max-w-7xl px-6 pb-12 pt-20">
+      <section className="mx-auto max-w-7xl px-6 pb-12 pt-6 sm:pt-8 lg:pt-10">
         <div className="max-w-3xl">
           <p className="mb-4 text-sm font-semibold uppercase tracking-[0.3em] text-[#9a7748]">
             Gavika Furnitech
@@ -725,6 +829,7 @@ export default function FurniturePage() {
                     : "bg-white text-gray-700 hover:bg-gray-100 border border-[#e7dccd]"
                   }`}
               >
+                <span className="text-base sm:text-lg">{getCategoryIcon(category)}</span>
                 <span>{category}</span>
                 <span
                   className={`rounded-full px-2 py-0.5 text-[10px] sm:text-xs font-semibold ${isSelected
@@ -788,6 +893,38 @@ export default function FurniturePage() {
               There are no products listed under the &quot;{selectedCategory}&quot; category yet.
             </p>
           </div>
+        ) : selectedCategory === "All" ? (
+          <div className="space-y-16">
+            {groupedCategories.map((group) => (
+              <div key={group.categoryName} className="space-y-6">
+                <div className="flex items-center justify-between border-b border-[#ded5c8] pb-3">
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-2xl">{getCategoryIcon(group.categoryName)}</span>
+                    <h3 className="text-xl sm:text-2xl font-serif font-semibold text-[#29251f]">
+                      {group.categoryName}
+                    </h3>
+                  </div>
+                  <span className="text-xs font-semibold text-[#7a5235] bg-[#f5efe6] px-3 py-1 rounded-full border border-[#ded5c8]">
+                    {group.products.length} {group.products.length === 1 ? "design" : "designs"}
+                  </span>
+                </div>
+
+                <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
+                  {group.products.map((product) => (
+                    <ProductCard
+                      key={product.id || product.name}
+                      product={product}
+                      onView={(activeIndex) =>
+                        openProductGallery(product, activeIndex)
+                      }
+                      onBuyNow={() => handleBuyNow(product)}
+                      onShare={(p) => setShareProduct(p as any)}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
         ) : (
           <div className="grid gap-8 sm:grid-cols-2 lg:grid-cols-3">
             {filteredProducts.map((product) => (
@@ -795,9 +932,10 @@ export default function FurniturePage() {
                 key={product.id || product.name}
                 product={product}
                 onView={(activeIndex) =>
-                  setGalleryProduct({ product, activeIndex })
+                  openProductGallery(product, activeIndex)
                 }
                 onBuyNow={() => handleBuyNow(product)}
+                onShare={(p) => setShareProduct(p as any)}
               />
             ))}
           </div>
@@ -808,7 +946,7 @@ export default function FurniturePage() {
       {galleryProduct && (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-md p-2 sm:p-4 md:p-6"
-          onClick={() => setGalleryProduct(null)}
+          onClick={closeProductGallery}
         >
           <div
             className="relative w-full max-w-5xl lg:max-w-6xl xl:max-w-7xl overflow-hidden rounded-2xl sm:rounded-3xl bg-[#1c1917] text-white shadow-2xl flex flex-col max-h-[96vh] sm:max-h-[95vh] border border-white/10"
@@ -832,6 +970,23 @@ export default function FurniturePage() {
               </div>
 
               <div className="flex items-center gap-2">
+                {/* Share Button */}
+                <button
+                  type="button"
+                  onClick={() => setShareProduct(galleryProduct.product as any)}
+                  className="inline-flex items-center gap-1.5 rounded-full bg-white/10 hover:bg-white/20 text-white/90 hover:text-white px-3 py-1 text-xs font-medium transition cursor-pointer"
+                  title="Share this design"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
+                  <span>Share</span>
+                </button>
+
                 {/* Direct Full-Res Original Link */}
                 <a
                   href={
@@ -853,7 +1008,7 @@ export default function FurniturePage() {
 
                 <button
                   type="button"
-                  onClick={() => setGalleryProduct(null)}
+                  onClick={closeProductGallery}
                   className="flex h-8 w-8 sm:h-9 sm:w-9 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 hover:bg-white/20 active:bg-white/30 hover:text-white transition"
                   aria-label="Close modal"
                 >
@@ -974,7 +1129,22 @@ export default function FurniturePage() {
               <div className="flex items-center gap-2 w-full sm:w-auto">
                 <button
                   type="button"
-                  onClick={() => setGalleryProduct(null)}
+                  onClick={() => setShareProduct(galleryProduct.product as any)}
+                  className="flex-1 sm:flex-initial text-center rounded-xl border border-white/20 px-3.5 py-2 sm:py-1.5 text-xs font-semibold text-white/90 hover:text-white active:bg-white/20 hover:bg-white/10 transition flex items-center justify-center gap-1.5 cursor-pointer"
+                  title="Share this design"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="18" cy="5" r="3" />
+                    <circle cx="6" cy="12" r="3" />
+                    <circle cx="18" cy="19" r="3" />
+                    <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                    <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+                  </svg>
+                  <span>Share</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={closeProductGallery}
                   className="flex-1 sm:flex-initial text-center rounded-xl border border-white/20 px-4 py-2 sm:py-1.5 text-xs font-semibold text-white/80 active:bg-white/20 hover:bg-white/10 transition"
                 >
                   Close
@@ -989,7 +1159,7 @@ export default function FurniturePage() {
                   type="button"
                   onClick={() => {
                     const prod = galleryProduct.product;
-                    setGalleryProduct(null);
+                    closeProductGallery();
                     handleBuyNow(prod);
                   }}
                   className="flex-1 sm:flex-initial text-center rounded-xl bg-white hover:bg-[#f5efe6] text-[#29251f] px-5 py-2 sm:py-1.5 text-xs font-semibold shadow-sm transition flex items-center justify-center gap-1.5"
@@ -1577,6 +1747,13 @@ export default function FurniturePage() {
           </div>
         </div>
       </footer>
+
+      {/* Product Share Modal */}
+      <ProductShareModal
+        product={shareProduct}
+        isOpen={Boolean(shareProduct)}
+        onClose={() => setShareProduct(null)}
+      />
     </main>
   );
 }
