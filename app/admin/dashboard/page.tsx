@@ -3,6 +3,11 @@
 import { getCategoryIcon, getCategoryOrderIndex } from "@/utils/categories";
 import ProductShareModal, { ShareableProduct } from "@/components/ProductShareModal";
 import {
+  compressImageFile,
+  compressImageFiles,
+  formatBytes,
+} from "@/utils/image-compression";
+import {
   deleteProductImagesFromStorage,
   extractProductImages,
 } from "@/utils/product-images";
@@ -614,7 +619,15 @@ export default function AdminDashboard() {
 
   type EditProductImageItem =
     | { id: string; type: "existing"; url: string }
-    | { id: string; type: "new"; file: File; preview: string };
+    | {
+        id: string;
+        type: "new";
+        file: File;
+        preview: string;
+        originalSize?: number;
+        compressedSize?: number;
+        savedPercentage?: number;
+      };
 
   const [editingProduct, setEditingProduct] = useState<CatalogueProduct | null>(null);
   const [editForm, setEditForm] = useState({
@@ -624,6 +637,10 @@ export default function AdminDashboard() {
     price: "",
     images: [] as EditProductImageItem[],
   });
+
+  // Compression loading state
+  const [isCompressingImages, setIsCompressingImages] = useState(false);
+  const [compressProgress, setCompressProgress] = useState({ current: 0, total: 0 });
 
   // Drag and drop state for Edit Product modal
   const [editDragIndex, setEditDragIndex] = useState<number | null>(null);
@@ -640,40 +657,80 @@ export default function AdminDashboard() {
     price: "Custom Quote",
     image_files: [] as File[],
     image_previews: [] as string[],
+    image_stats: [] as { originalSize: number; compressedSize: number; savedPercentage: number }[],
   });
 
-  const handleSelectProductImages = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
-
-    setProductForm((prev) => {
-      const remainingSlots = 5 - prev.image_files.length;
-      if (remainingSlots <= 0) {
-        showToast({
-          type: "error",
-          text: "Maximum 5 images allowed per product design.",
-        });
-        return prev;
-      }
-
-      if (files.length > remainingSlots) {
-        showToast({
-          type: "error",
-          text: `Only ${remainingSlots} more image${remainingSlots === 1 ? "" : "s"} can be added (max 5).`,
-        });
-      }
-
-      const filesToAdd = files.slice(0, remainingSlots);
-      const newFiles = [...prev.image_files, ...filesToAdd];
-      const newPreviews = [...prev.image_previews, ...filesToAdd.map((f) => URL.createObjectURL(f))];
-
-      return {
-        ...prev,
-        image_files: newFiles,
-        image_previews: newPreviews,
-      };
-    });
+  const handleSelectProductImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawFiles = Array.from(e.target.files || []);
+    if (!rawFiles.length) return;
     e.target.value = "";
+
+    const remainingSlots = 5 - productForm.image_files.length;
+    if (remainingSlots <= 0) {
+      showToast({
+        type: "error",
+        text: "Maximum 5 images allowed per product design.",
+      });
+      return;
+    }
+
+    if (rawFiles.length > remainingSlots) {
+      showToast({
+        type: "error",
+        text: `Only ${remainingSlots} more image${remainingSlots === 1 ? "" : "s"} can be added (max 5).`,
+      });
+    }
+
+    const filesToProcess = rawFiles.slice(0, remainingSlots);
+    setIsCompressingImages(true);
+    setCompressProgress({ current: 0, total: filesToProcess.length });
+
+    try {
+      const results = await compressImageFiles(
+        filesToProcess,
+        { maxWidth: 1600, maxHeight: 1600, quality: 0.82 },
+        (completed, total) => setCompressProgress({ current: completed, total })
+      );
+
+      const newFiles = results.map((r) => r.file);
+      const newPreviews = results.map((r) => r.previewUrl);
+      const newStats = results.map((r) => ({
+        originalSize: r.originalSize,
+        compressedSize: r.compressedSize,
+        savedPercentage: r.savedPercentage,
+      }));
+
+      setProductForm((prev) => ({
+        ...prev,
+        image_files: [...prev.image_files, ...newFiles],
+        image_previews: [...prev.image_previews, ...newPreviews],
+        image_stats: [...(prev.image_stats || []), ...newStats],
+      }));
+
+      const totalSaved = results.reduce(
+        (acc, r) => acc + (r.originalSize - r.compressedSize),
+        0
+      );
+      if (totalSaved > 0) {
+        showToast({
+          type: "success",
+          text: `Optimized ${results.length} image(s)! Saved ${formatBytes(totalSaved)} of bandwidth.`,
+        });
+      }
+    } catch (err) {
+      console.error("Compression error:", err);
+      // Fallback: use raw files if compression throws
+      setProductForm((prev) => ({
+        ...prev,
+        image_files: [...prev.image_files, ...filesToProcess],
+        image_previews: [
+          ...prev.image_previews,
+          ...filesToProcess.map((f) => URL.createObjectURL(f)),
+        ],
+      }));
+    } finally {
+      setIsCompressingImages(false);
+    }
   };
 
   const handleRemoveProductImage = (idx: number) => {
@@ -681,6 +738,7 @@ export default function AdminDashboard() {
       ...prev,
       image_files: prev.image_files.filter((_, i) => i !== idx),
       image_previews: prev.image_previews.filter((_, i) => i !== idx),
+      image_stats: (prev.image_stats || []).filter((_, i) => i !== idx),
     }));
   };
 
@@ -690,53 +748,97 @@ export default function AdminDashboard() {
       if (toIndex >= prev.image_files.length) return prev;
       const files = [...prev.image_files];
       const previews = [...prev.image_previews];
+      const stats = [...(prev.image_stats || [])];
+
       const [movedFile] = files.splice(fromIndex, 1);
       const [movedPreview] = previews.splice(fromIndex, 1);
+      const [movedStat] = stats.splice(fromIndex, 1);
+
       files.splice(toIndex, 0, movedFile);
       previews.splice(toIndex, 0, movedPreview);
+      if (movedStat) stats.splice(toIndex, 0, movedStat);
+
       return {
         ...prev,
         image_files: files,
         image_previews: previews,
+        image_stats: stats,
       };
     });
   };
 
-  const handleSelectEditImages = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = Array.from(e.target.files || []);
-    if (!files.length) return;
+  const handleSelectEditImages = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const rawFiles = Array.from(e.target.files || []);
+    if (!rawFiles.length) return;
+    e.target.value = "";
 
-    setEditForm((prev) => {
-      const remainingSlots = 5 - prev.images.length;
-      if (remainingSlots <= 0) {
+    const remainingSlots = 5 - editForm.images.length;
+    if (remainingSlots <= 0) {
+      showToast({
+        type: "error",
+        text: "Maximum 5 images allowed per product.",
+      });
+      return;
+    }
+
+    if (rawFiles.length > remainingSlots) {
+      showToast({
+        type: "error",
+        text: `Only ${remainingSlots} more image${remainingSlots === 1 ? "" : "s"} can be added (max 5).`,
+      });
+    }
+
+    const filesToProcess = rawFiles.slice(0, remainingSlots);
+    setIsCompressingImages(true);
+    setCompressProgress({ current: 0, total: filesToProcess.length });
+
+    try {
+      const results = await compressImageFiles(
+        filesToProcess,
+        { maxWidth: 1600, maxHeight: 1600, quality: 0.82 },
+        (completed, total) => setCompressProgress({ current: completed, total })
+      );
+
+      const newItems: EditProductImageItem[] = results.map((r, i) => ({
+        id: `new-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
+        type: "new",
+        file: r.file,
+        preview: r.previewUrl,
+        originalSize: r.originalSize,
+        compressedSize: r.compressedSize,
+        savedPercentage: r.savedPercentage,
+      }));
+
+      setEditForm((prev) => ({
+        ...prev,
+        images: [...prev.images, ...newItems],
+      }));
+
+      const totalSaved = results.reduce(
+        (acc, r) => acc + (r.originalSize - r.compressedSize),
+        0
+      );
+      if (totalSaved > 0) {
         showToast({
-          type: "error",
-          text: "Maximum 5 images allowed per product.",
-        });
-        return prev;
-      }
-
-      if (files.length > remainingSlots) {
-        showToast({
-          type: "error",
-          text: `Only ${remainingSlots} more image${remainingSlots === 1 ? "" : "s"} can be added (max 5).`,
+          type: "success",
+          text: `Optimized ${results.length} image(s)! Saved ${formatBytes(totalSaved)} of bandwidth.`,
         });
       }
-
-      const filesToAdd = files.slice(0, remainingSlots);
-      const newItems: EditProductImageItem[] = filesToAdd.map((file, i) => ({
+    } catch (err) {
+      console.error("Edit compression error:", err);
+      const fallbackItems: EditProductImageItem[] = filesToProcess.map((file, i) => ({
         id: `new-${Date.now()}-${i}-${Math.random().toString(36).slice(2, 7)}`,
         type: "new",
         file,
         preview: URL.createObjectURL(file),
       }));
-
-      return {
+      setEditForm((prev) => ({
         ...prev,
-        images: [...prev.images, ...newItems],
-      };
-    });
-    e.target.value = "";
+        images: [...prev.images, ...fallbackItems],
+      }));
+    } finally {
+      setIsCompressingImages(false);
+    }
   };
 
   const handleRemoveEditImage = (index: number) => {
@@ -858,7 +960,9 @@ export default function AdminDashboard() {
       .createSignedUrl(storagePath, 60 * 60);
 
     if (error) {
-      console.error("Storage signed URL error:", error.message);
+      if (error.message !== "Object not found") {
+        console.warn("Storage signed URL:", error.message);
+      }
       return null;
     }
 
@@ -1874,12 +1978,15 @@ export default function AdminDashboard() {
       const uploadedUrls: string[] = [];
       for (let i = 0; i < productForm.image_files.length; i++) {
         const file = productForm.image_files[i];
-        const fileExt = file.name.split(".").pop() || "jpg";
+        const fileExt = file.name.split(".").pop() || "webp";
         const filePath = `products/${Date.now()}-${i}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
         const { error: uploadError } = await supabase.storage
           .from("gavika-project-files")
-          .upload(filePath, file, { upsert: true });
+          .upload(filePath, file, {
+            contentType: file.type || "image/webp",
+            upsert: true,
+          });
 
         if (uploadError) {
           throw new Error(`Failed to upload image ${i + 1}: ${uploadError.message}`);
@@ -1937,6 +2044,7 @@ export default function AdminDashboard() {
           price: "Custom Quote",
           image_files: [],
           image_previews: [],
+          image_stats: [],
         });
         setProductFeedback({
           type: "success",
@@ -2132,12 +2240,15 @@ export default function AdminDashboard() {
           allUrls.push(item.url);
         } else {
           const file = item.file;
-          const fileExt = file.name.split(".").pop() || "jpg";
+          const fileExt = file.name.split(".").pop() || "webp";
           const filePath = `products/${Date.now()}-${i}-${Math.random().toString(36).substring(2, 8)}.${fileExt}`;
 
           const { error: uploadError } = await supabase.storage
             .from("gavika-project-files")
-            .upload(filePath, file, { upsert: true });
+            .upload(filePath, file, {
+              contentType: file.type || "image/webp",
+              upsert: true,
+            });
 
           if (uploadError) {
             throw new Error(`Failed to upload new image ${i + 1}: ${uploadError.message}`);
@@ -2500,9 +2611,21 @@ export default function AdminDashboard() {
         setQuotationLoading(false);
         return;
       }
-      const extension = drawingFile.name.split(".").pop()?.toLowerCase() || "bin";
+      let finalDrawingFile = drawingFile;
+      if (drawingFile.type.startsWith("image/")) {
+        try {
+          const comp = await compressImageFile(drawingFile, { maxWidth: 1800, maxHeight: 1800, quality: 0.85 });
+          finalDrawingFile = comp.file;
+        } catch {}
+      }
+      const extension = finalDrawingFile.name.split(".").pop()?.toLowerCase() || "bin";
       const drawingPath = `drawings/${selectedRequest.id}/${crypto.randomUUID()}.${extension}`;
-      const { error: uploadError } = await supabase.storage.from("gavika-project-files").upload(drawingPath, drawingFile, { contentType: drawingFile.type, upsert: false });
+      const { error: uploadError } = await supabase.storage
+        .from("gavika-project-files")
+        .upload(drawingPath, finalDrawingFile, {
+          contentType: finalDrawingFile.type || "application/octet-stream",
+          upsert: false,
+        });
       if (uploadError) {
         setQuotationMessage({ type: "error", text: `Drawing upload failed: ${uploadError.message}` });
         setQuotationLoading(false);
@@ -3146,6 +3269,16 @@ export default function AdminDashboard() {
                     </span>
                   </div>
 
+                  {isCompressingImages && (
+                    <div className="flex items-center justify-center gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium animate-pulse">
+                      <svg className="animate-spin h-4 w-4 text-amber-600" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                      </svg>
+                      <span>Optimizing & compressing images ({compressProgress.current}/{compressProgress.total})...</span>
+                    </div>
+                  )}
+
                   {productForm.image_files.length < 5 && (
                     <label className="flex flex-col items-center justify-center p-4 border-2 border-dashed border-[#cfc3b3] rounded-xl bg-white hover:bg-[#fbf9f6] cursor-pointer transition">
                       <span className="text-2xl mb-1">📸</span>
@@ -3153,7 +3286,7 @@ export default function AdminDashboard() {
                         Click to select images (JPG, PNG, WEBP)
                       </span>
                       <span className="text-[11px] text-gray-400 mt-0.5">
-                        Select up to 5 photos for this design
+                        Photos auto-compress to ~150 KB WebP to keep storage lightweight & fast
                       </span>
                       <input
                         type="file"
@@ -3228,6 +3361,15 @@ export default function AdminDashboard() {
                                 </span>
                               )}
                             </div>
+
+                            {/* Compression Savings Badge */}
+                            {productForm.image_stats?.[idx] && (
+                              <div className="absolute top-1.5 right-1.5">
+                                <span className="bg-emerald-600/90 backdrop-blur-xs text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow">
+                                  {formatBytes(productForm.image_stats[idx].compressedSize)} (-{productForm.image_stats[idx].savedPercentage}%)
+                                </span>
+                              </div>
+                            )}
 
                             {/* Controls Bar */}
                             <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1 sm:p-1.5 flex items-center justify-between opacity-90 group-hover:opacity-100 transition">
@@ -5574,6 +5716,16 @@ export default function AdminDashboard() {
                   </span>
                 </div>
 
+                {isCompressingImages && (
+                  <div className="flex items-center justify-center gap-2.5 p-3 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-xs font-medium animate-pulse">
+                    <svg className="animate-spin h-4 w-4 text-amber-600" fill="none" viewBox="0 0 24 24">
+                      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                    </svg>
+                    <span>Optimizing & compressing images ({compressProgress.current}/{compressProgress.total})...</span>
+                  </div>
+                )}
+
                 {/* Grid of Draggable Images */}
                 <div className="grid grid-cols-2 sm:grid-cols-5 gap-2.5">
                   {editForm.images.map((item, idx) => {
@@ -5643,6 +5795,15 @@ export default function AdminDashboard() {
                             </span>
                           )}
                         </div>
+
+                        {/* Compression Savings Badge */}
+                        {item.type === "new" && item.compressedSize && (
+                          <div className="absolute top-1.5 right-1.5">
+                            <span className="bg-emerald-600/90 backdrop-blur-xs text-white text-[9px] font-bold px-1.5 py-0.5 rounded shadow">
+                              {formatBytes(item.compressedSize)} (-{item.savedPercentage}%)
+                            </span>
+                          </div>
+                        )}
 
                         {/* Bottom Action Controls */}
                         <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/80 via-black/40 to-transparent p-1 sm:p-1.5 flex items-center justify-between opacity-90 group-hover:opacity-100 transition">

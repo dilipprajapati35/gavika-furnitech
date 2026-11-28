@@ -2,6 +2,7 @@
 export const dynamic = "force-dynamic";
 import { locationData } from "@/data/locations";
 import { products } from "@/data/products";
+import { compressImageFile } from "@/utils/image-compression";
 import { extractProductImages } from "@/utils/product-images";
 import { supabase } from "@/utils/supabase/client";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -350,16 +351,28 @@ function CustomFurnitureContent() {
           return;
         }
 
+        let fileToUpload = referenceFile;
+        try {
+          const comp = await compressImageFile(referenceFile, {
+            maxWidth: 1600,
+            maxHeight: 1600,
+            quality: 0.82,
+          });
+          fileToUpload = comp.file;
+        } catch (compErr) {
+          console.warn("Reference image compression fallback:", compErr);
+        }
+
         const extension =
-          referenceFile.name.split(".").pop()?.toLowerCase() || "jpg";
+          fileToUpload.name.split(".").pop()?.toLowerCase() || "webp";
 
         referenceImagePath =
           `references/${userId}/${requestId}-${crypto.randomUUID()}.${extension}`;
 
         const { error: uploadError } = await supabase.storage
           .from("gavika-project-files")
-          .upload(referenceImagePath, referenceFile, {
-            contentType: referenceFile.type,
+          .upload(referenceImagePath, fileToUpload, {
+            contentType: fileToUpload.type || "image/webp",
             upsert: false,
           });
 
