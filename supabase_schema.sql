@@ -119,27 +119,24 @@ alter table public.custom_requests enable row level security;
 alter table public.quotations enable row level security;
 alter table public.orders enable row level security;
 
--- Admin Users Policies
+-- Admin Users Policies (Non-recursive)
 drop policy if exists "Users can check their own admin status" on public.admin_users;
 create policy "Users can check their own admin status"
   on public.admin_users for select
   to authenticated
-  using (
-    auth.uid() = user_id or
-    exists (select 1 from public.admin_users au where au.user_id = auth.uid())
-  );
+  using (auth.uid() = user_id);
 
 drop policy if exists "Admins can insert admin users" on public.admin_users;
 create policy "Admins can insert admin users"
   on public.admin_users for insert
   to authenticated
-  with check (exists (select 1 from public.admin_users au where au.user_id = auth.uid()));
+  with check (auth.uid() = user_id);
 
 drop policy if exists "Admins can delete admin users" on public.admin_users;
 create policy "Admins can delete admin users"
   on public.admin_users for delete
   to authenticated
-  using (exists (select 1 from public.admin_users au where au.user_id = auth.uid()));
+  using (auth.uid() = user_id);
 
 -- Custom Requests Policies
 drop policy if exists "Users can create custom requests" on public.custom_requests;
